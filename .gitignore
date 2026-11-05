@@ -1,0 +1,12 @@
+node_modules/
+target/
+apps/gui/src-tauri/gen/
+.env
+.env.*
+!.env.example
+dist/
+.omnistream/
+*.db
+*.db-journal
+apps/gui/test-results/
+apps/gui/playwright-report/

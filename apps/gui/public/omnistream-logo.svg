@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="48" viewBox="0 0 220 48" role="img" aria-labelledby="title desc">
+  <title id="title">OmniStream</title>
+  <desc id="desc">Three coordinated streams converge into a shared task flow.</desc>
+  <rect x="2" y="2" width="44" height="44" rx="11" fill="#222326"/>
+  <path d="M12 16h9c4.4 0 7 2.4 7 6s-2.6 6-7 6h-9" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M12 24h15c4.4 0 7 2.4 7 6s-2.6 6-7 6H12" fill="none" stroke="#63c49d" stroke-width="3" stroke-linecap="round"/>
+  <path d="M28 16h5c4.4 0 7 2.4 7 6s-2.6 6-7 6h-5" fill="none" stroke="#c8f0dc" stroke-width="3" stroke-linecap="round" opacity=".95"/>
+  <circle cx="34" cy="30" r="3" fill="#fff"/>
+  <text x="58" y="31" fill="#222326" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="21" font-weight="600" letter-spacing="-.45">Omni</text>
+  <text x="108" y="31" fill="#16765d" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="21" font-weight="750" letter-spacing="-.45">Stream</text>
+</svg>

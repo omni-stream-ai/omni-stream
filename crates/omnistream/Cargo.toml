@@ -1,0 +1,38 @@
+[package]
+name = "omnistream"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "omnistream"
+
+[dependencies]
+omnistream-core = { path = "../omnistream-core" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+serde_json = "1"
+libc = "0.2"
+sha2 = "0.10"
+base64 = "0.22"
+tiny_http = "0.12"
+getrandom = "0.3"
+tempfile = "3"
+jsonschema = { version = "0.33", default-features = false }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tokio = { version = "1", features = ["rt", "time", "process", "io-util", "macros"] }
+tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[dependencies.reqwest]
+version = "0.12"
+default-features = false
+features = ["blocking", "json", "rustls-tls"]
+
+[[bin]]
+name = "omnistream"
+path = "src/main.rs"
+
+[[bin]]
+name = "omnistream-mock-model"
+path = "src/bin/mock_model.rs"

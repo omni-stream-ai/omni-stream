@@ -1,0 +1,5 @@
+[
+  {"body":{"output_text":"{\"kind\":\"reply\",\"message\":\"Mock model ready\"}"}},
+  {"body":{"choices":[{"message":{"content":"{\"kind\":\"reply\",\"message\":\"Second reply\"}"}}]}},
+  {"status":429,"body":{"error":{"message":"Mock rate limit"}}}
+]

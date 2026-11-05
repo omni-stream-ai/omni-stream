@@ -1,0 +1,16 @@
+{
+  "name": "omnistream",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r build && pnpm -r typecheck",
+    "dev": "pnpm --filter @omnistream/gui dev",
+    "gui:dev": "pnpm --filter @omnistream/gui dev",
+    "gui:build": "pnpm --filter @omnistream/gui build",
+    "server:dev": "pnpm --filter @omnistream/server dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

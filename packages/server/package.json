@@ -1,0 +1,1 @@
+{"name":"@omnistream/server","version":"0.1.0","type":"module","private":true,"dependencies":{"@omnistream/core":"workspace:*","@omnistream/storage-sqlite":"workspace:*"},"devDependencies":{"@types/node":"^22.10.2"},"scripts":{"build":"tsc -p tsconfig.json","typecheck":"tsc -p tsconfig.json --noEmit","dev":"node dist/index.js","test":"node --test"}}

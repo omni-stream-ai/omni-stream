@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OmniStream",
+  "version": "0.1.0",
+  "identifier": "com.omnistream.agent",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "title": "OmniStream", "width": 1280, "height": 800, "minWidth": 960, "minHeight": 640 }],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/omnistream-32.png",
+      "icons/omnistream-128.png",
+      "icons/omnistream-256.png",
+      "icons/omnistream-512.png"
+    ],
+    "externalBin": ["binaries/omnistream"]
+  }
+}
