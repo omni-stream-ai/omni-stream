@@ -3,7 +3,7 @@ import { Bot, Check, Link, X, Plus, Settings2, Folder, Menu, Search, Clock3, Puz
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, type PluginSetupContext } from './lib/api';
-import { EmptyState, ErrorState } from './components/StateView';
+import { EmptyState, ErrorState, LoadingState } from './components/StateView';
 import { ConversationView } from './components/ConversationView';
 import { AutomationPanel } from './components/AutomationPanel';
 import { AgentsPanel } from './components/AgentsPanel';
@@ -35,7 +35,7 @@ function Dialog({ title, onClose, children, className }: { title: string; onClos
   </dialog>;
 }
 
-function ProjectOptions({ recentProjects, knownProjects, search, current, selectedValue, onChoose }: { recentProjects: string[]; knownProjects: string[]; search: string; current: string; selectedValue?: string; onChoose: (value: string) => void }) {
+function ProjectOptions({ recentProjects, knownProjects, search, current, selectedValue, onChoose, ready }: { ready: boolean; recentProjects: string[]; knownProjects: string[]; search: string; current: string; selectedValue?: string; onChoose: (value: string) => void }) {
   const { t } = useI18n();
   const normalized = search.trim().toLowerCase();
   const matches = (value: string) => !normalized || value.toLowerCase().includes(normalized);
@@ -44,7 +44,7 @@ function ProjectOptions({ recentProjects, knownProjects, search, current, select
   return <div className="project-options">
     {recent.length ? <section><h3><Clock3 size={13} />{t('project.recent')}</h3>{recent.map((value) => <button type="button" className={`project-option${value === (selectedValue ?? current) ? ' selected' : ''}`} key={`recent-${value}`} onClick={() => onChoose(value)}><Folder size={15} /><span>{value}</span></button>)}</section> : null}
     {known.length ? <section><h3><Folder size={13} />{t('project.known')}</h3>{known.map((value) => <button type="button" className={`project-option${value === selectedValue ? ' selected' : ''}`} key={`known-${value}`} onClick={() => onChoose(value)}><Folder size={15} /><span>{value}</span></button>)}</section> : null}
-    {!recent.length && !known.length && normalized && !/^(\/|~)/.test(normalized) ? <EmptyState compact title={t('project.noMatch')} description={t('project.noSearchResults')} /> : null}
+    {ready && !recent.length && !known.length && normalized && !/^(\/|~)/.test(normalized) ? <EmptyState compact title={t('project.noMatch')} description={t('project.noSearchResults')} /> : null}
   </div>;
 }
 
@@ -232,8 +232,11 @@ export default function App() {
       {dialog === 'project' ? <Dialog title={t('dialog.selectProject')} className="project-dialog" onClose={() => setDialog(null)}>
         <div className="project-picker">
           <label className="project-search"><Search size={16} /><input autoFocus value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === 'ArrowDown' && projectCandidates.length) { event.preventDefault(); setProjectSelection((index) => Math.min(index + 1, projectCandidates.length - 1)); } if (event.key === 'ArrowUp' && projectCandidates.length) { event.preventDefault(); setProjectSelection((index) => Math.max(index - 1, 0)); } if (event.key === 'Enter' && (selectedProjectCandidate || projectSearch.trim())) { event.preventDefault(); chooseProject(selectedProjectCandidate ?? projectSearch.trim()); } }} placeholder={t('dialog.searchProject')} />{isPathSearch && pathSuggestions.isFetching ? <span className="project-loading" role="status" aria-label={t('common.loading')} /> : null}</label>
-          <ProjectOptions recentProjects={recentProjects} knownProjects={knownProjects} search={projectSearch} current={project} selectedValue={selectedProjectCandidate} onChoose={chooseProject} />
+          {!isPathSearch && registeredProjects.isPending && <LoadingState />}
+          {!isPathSearch && registeredProjects.isError && <ErrorState compact title={t('project.pathLoadFailed')} description={registeredProjects.error.message} onRetry={() => void registeredProjects.refetch()} retrying={registeredProjects.isFetching} />}
+          <ProjectOptions ready={registeredProjects.isSuccess} recentProjects={recentProjects} knownProjects={knownProjects} search={projectSearch} current={project} selectedValue={selectedProjectCandidate} onChoose={chooseProject} />
           {isPathSearch ? <section className="project-path-results" aria-label={t('dialog.pathSuggestions')}>
+            {isPathSearch && pathSuggestions.isFetching && !pathSuggestions.data && <LoadingState />}
             {pathSuggestions.isError ? <ErrorState compact title={t('project.pathLoadFailed')} description={pathSuggestions.error.message} onRetry={() => { void pathSuggestions.refetch(); }} retrying={pathSuggestions.isFetching} /> : <>
               {(pathSuggestions.data ?? []).map((path) => <div className="project-path-row" key={path}>
                 <button type="button" className={`project-option${path === selectedProjectCandidate ? ' selected' : ''}`} title={path} onMouseEnter={() => setProjectSelection(projectCandidates.indexOf(path))} onClick={() => chooseProject(path)}><Folder size={15} /><span>{path}</span></button>
@@ -261,6 +264,7 @@ export default function App() {
           <div className="sidebar-scroll">
           <div className="section-heading sidebar-heading"><h2>{t('nav.conversations')}</h2><span className="count">{(conversations.data?.length ?? 0) + (conversations.data?.includes(conversation) ? 0 : 1)}</span></div>
           <div className="conversation-list">
+            {conversations.isPending && <LoadingState />}
             {!conversations.data?.includes(conversation) ? <div className={`conversation-row${view === 'chat' ? ' active' : ''}`}><button type="button" className="conversation-item" aria-current={view === 'chat' ? 'page' : undefined} onClick={() => selectConversation(conversation)}><span>{t('conversation.new')}</span></button></div> : null}
             {(conversations.data ?? []).map((id, index) => {
               const historyForTitle = id === conversation ? (history.data ?? []) : (conversationHistories[index]?.data ?? []);

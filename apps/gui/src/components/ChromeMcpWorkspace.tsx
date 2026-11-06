@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { ArrowLeft, Chrome, LoaderCircle } from 'lucide-react';
 import { pluginApi, type MarketplacePlugin } from '../lib/api';
+import { ErrorState } from './StateView';
 import { useI18n } from '../i18n';
 
 export function ChromeMcpWorkspace({ plugin, onBack, onChange, onRefresh }: { plugin: MarketplacePlugin; onBack: () => void; onChange: (plugin: MarketplacePlugin) => void; onRefresh: () => void }) {
@@ -27,7 +28,7 @@ export function ChromeMcpWorkspace({ plugin, onBack, onChange, onRefresh }: { pl
       </div>
       {save.isSuccess && <p className="plugin-success" role="status">{t('chrome.saved')}</p>}
       {test.isSuccess && <p className="plugin-success" role="status">{t('chrome.connected')}</p>}
-      {(error || plugin.browser?.last_error) && <p className="error" role="alert">{error?.message ?? plugin.browser?.last_error}</p>}
+      {(error || plugin.browser?.last_error) && <ErrorState compact title={t('common.operationFailed')} description={error?.message ?? plugin.browser?.last_error ?? ''} onRetry={() => save.error ? save.mutate() : test.mutate()} retrying={pending} />}
       {plugin.browser?.verified_at && <p className="muted">{t('plugins.verifiedAt', { time: new Date(plugin.browser.verified_at * 1000).toLocaleString(locale) })}</p>}
       <details className="plugin-manual-setup"><summary>{t('chrome.details')}</summary><p className="muted">{t('chrome.runtime', { version: plugin.browser?.package_version ?? plugin.manifest.version })}</p><p className="muted">{t('chrome.lifecycle')}</p></details>
     </form>

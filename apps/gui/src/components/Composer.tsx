@@ -1,3 +1,4 @@
+import { ErrorState } from './StateView';
 import { useEffect, useRef, useState, ReactNode } from 'react';
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
 import { PlainTextPlugin } from '@lexical/react/LexicalPlainTextPlugin';
@@ -135,7 +136,7 @@ function Editor({ busy, projects, agents, searchProjects, controls, onSend, onCo
       <button type="button" className="icon-button" title={t('composer.addAttachment')} aria-label={t('composer.addAttachment')} onClick={() => picker.current?.click()}><Paperclip size={18} /></button>
       <button type="button" className="primary send-button" title={t('composer.send')} aria-label={t('composer.send')} disabled={busy || sending || !!reading || (!text.trim() && !attachments.length)} onClick={() => void send()}><Send size={18} /></button>
     </div></div>
-    {error && <p className="error" role="alert">{error}</p>}
+    {error && <ErrorState compact title={t('common.operationFailed')} description={error} onRetry={() => setError('')} retryLabel={t('common.edit')} />}
     {preview !== null && <ImagePreview images={imageAttachments.map(item => ({ url: item.data, name: item.name }))} initial={preview} onClose={() => setPreview(null)} />}
   </div>;
 }

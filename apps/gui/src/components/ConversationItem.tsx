@@ -1,3 +1,4 @@
+import { ErrorState } from './StateView';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Archive, Check, Ellipsis, Pencil, Trash2, X } from 'lucide-react';
@@ -16,6 +17,7 @@ export function ConversationItem({ title, active, onSelect, onAction }: {
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(title);
   const [busy, setBusy] = useState(false);
+  const [failedAction, setFailedAction] = useState<'rename' | 'archive' | 'delete'>('rename');
   const [error, setError] = useState('');
   useEffect(() => {
     if (!position) return;
@@ -39,7 +41,7 @@ export function ConversationItem({ title, active, onSelect, onAction }: {
   const act = async (action: 'rename' | 'archive' | 'delete') => {
     setPosition(null); setBusy(true); setError('');
     try { await onAction(action, name.trim()); setRenaming(false); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : t('conversation.operationFailed')); }
+    catch (cause) { setFailedAction(action); setError(cause instanceof Error ? cause.message : t('conversation.operationFailed')); }
     finally { setBusy(false); }
   };
   return <div className="conversation-list-entry">
@@ -57,7 +59,7 @@ export function ConversationItem({ title, active, onSelect, onAction }: {
         }}><Ellipsis size={17} /></button>
       </>}
     </div>
-    {error && <p role="alert" className="conversation-action-error">{error}</p>}
+    {error && <ErrorState compact title={t('conversation.operationFailed')} description={error} onRetry={() => void act(failedAction)} retrying={busy} />}
     {position && createPortal(<div ref={menu} className="conversation-menu" style={position} role="menu" aria-label={t('conversation.moreActions')} onKeyDown={event => {
       if (event.key === 'Escape' || event.key === 'Tab') { setPosition(null); if (event.key === 'Escape') { event.preventDefault(); trigger.current?.focus(); } }
       if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {

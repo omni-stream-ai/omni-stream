@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { pluginApi, type AutomationOptions as Options, type AutomationTarget, type DateOverride } from '../lib/api';
 import { useI18n } from '../i18n';
-import { ErrorState } from './StateView';
+import { ErrorState, LoadingState } from './StateView';
 
 export function AutomationOptions({ value, onChange, server }: { value: Options; onChange: (value: Options) => void; server: string }) {
   const { t } = useI18n();
@@ -41,6 +41,7 @@ export function AutomationOptions({ value, onChange, server }: { value: Options;
     {value.time_window?.kind === 'previous_effective_day' && <label>{t('automation.cutoff')}<input type="time" step={1} required value={[value.time_window.hour, value.time_window.minute, value.time_window.second ?? 0].map(n => String(n).padStart(2, '0')).join(':')} onChange={event => { const [hour, minute, second = 0] = event.target.value.split(':').map(Number); set({ time_window: { kind: 'previous_effective_day', hour, minute, second } }); }} /></label>}
     <label><input type="checkbox" checked={value.silent_unmet ?? false} onChange={event => set({ silent_unmet: event.target.checked })} />{t('automation.silent')}</label>
     <fieldset><legend>{t('automation.targets')}</legend><p className="muted">{t('automation.targetsHint')}</p>
+      {plugins.isPending && <LoadingState lines={1} />}
       {plugins.isError && <ErrorState compact title={t('automation.pluginsFailed')} description={plugins.error.message} onRetry={() => void plugins.refetch()} retrying={plugins.isFetching} />}
       {targets.map((target, index) => {
         const plugin = target.type === 'plugin_action' ? plugins.data?.find(p => p.manifest.id === target.plugin) : undefined;

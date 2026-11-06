@@ -27,8 +27,6 @@
 .plugin-description { flex: 1; margin: 16px 0 20px; color: var(--muted); font-size: 13px; line-height: 1.8; }
 .plugin-card-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .plugin-category { color: var(--muted); font-size: 11px; }
-.plugin-action-error { margin-top: 14px; color: #a63830; font-size: 12px; line-height: 1.6; }
-.plugin-action-error p { margin: 0 0 8px; }
 .plugin-connection-status { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .plugin-connection-status.connected, .plugin-success { color: #17654f; }
 .plugin-connection-status.error { color: #a63830; }

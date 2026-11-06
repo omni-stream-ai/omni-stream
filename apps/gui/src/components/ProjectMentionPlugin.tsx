@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { $createTextNode, $getRoot, $getSelection, $isRangeSelection, $isTextNode, $setSelection, COMMAND_PRIORITY_HIGH, KEY_ARROW_DOWN_COMMAND, KEY_ARROW_UP_COMMAND, KEY_ENTER_COMMAND, KEY_ESCAPE_COMMAND, NodeKey, SerializedTextNode, TextNode } from 'lexical';
+import { LoadingState, ErrorState, EmptyState } from './StateView';
 import { useI18n } from '../i18n';
 import type { NamedAgent } from '../lib/api';
 
@@ -33,13 +34,17 @@ export function ProjectMentionPlugin({ projects, agents = [], searchProjects, on
   const [editor] = useLexicalComposerContext();
   const [mention, setMention] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
+  const [resolvedMention, setResolvedMention] = useState<string | null>(null);
   const [pathOptions, setPathOptions] = useState<string[]>([]);
   const optionsRef = useRef<HTMLDivElement>(null);
   const ignoredText = useRef<string | null>(null);
   const pathMention = mention !== null && /^(\/|~)/.test(mention);
   const options: Choice[] = mention === null ? [] : [
     ...(!pathMention ? agents.filter(agent => `${agent.name} ${agent.description}`.toLowerCase().includes(mention.toLowerCase())).map(agent => ({ label: agent.name, reference: `agent:${agent.id}`, agent })) : []),
-    ...(pathMention ? pathOptions : filterProjectOptions(projects, mention)).map(label => ({ label, reference: `project:${label}` })),
+    ...(pathMention ? resolvedMention === mention ? pathOptions : [] : filterProjectOptions(projects, mention)).map(label => ({ label, reference: `project:${label}` })),
   ];
 
   useEffect(() => setIndex(0), [mention]);
@@ -48,11 +53,12 @@ export function ProjectMentionPlugin({ projects, agents = [], searchProjects, on
     if (selected && typeof selected.scrollIntoView === 'function') selected.scrollIntoView({ block: 'nearest' });
   }, [index, options]);
   useEffect(() => {
-    if (!pathMention || !searchProjects || mention === null) { setPathOptions([]); return; }
+    if (!pathMention || !searchProjects || mention === null) { setPathOptions([]); setLoading(false); setError(''); return; }
     let active = true;
-    const timer = window.setTimeout(() => { void searchProjects(mention).then(value => { if (active) setPathOptions(value); }).catch(() => { if (active) setPathOptions([]); }); }, 180);
+    setLoading(true); setError('');
+    const timer = window.setTimeout(() => { void searchProjects(mention).then(value => { if (active) { setPathOptions(value); setResolvedMention(mention); } }).catch(cause => { if (active) { setPathOptions([]); setError(cause instanceof Error ? cause.message : String(cause)); } }).finally(() => { if (active) setLoading(false); }); }, 180);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [mention, pathMention, searchProjects]);
+  }, [mention, pathMention, searchProjects, retry]);
   useEffect(() => editor.registerTextContentListener(() => {
     editor.getEditorState().read(() => {
       const text = $getRoot().getTextContent();
@@ -89,5 +95,7 @@ export function ProjectMentionPlugin({ projects, agents = [], searchProjects, on
     return () => { down(); up(); escape(); };
   }, [editor, mention, options.length]);
   if (mention === null) return null;
-  return <div ref={optionsRef} className="mention-options" role="listbox" aria-label={t(agents.length ? 'agents.references' : 'project.label')}>{options.map((value, item) => <button type="button" role="option" aria-selected={item === index} key={value.reference} onMouseDown={event => event.preventDefault()} onMouseEnter={() => setIndex(item)} onClick={() => choose(value)}>{value.agent ? `@${value.label} · ${t('agents.agent')}` : value.label}</button>)}{!options.length && <span>{t('project.noMatchShort')}</span>}</div>;
+  return <div ref={optionsRef} className="mention-options" role="listbox" aria-label={t(agents.length ? 'agents.references' : 'project.label')}>{options.map((value, item) => <button type="button" role="option" aria-selected={item === index} key={value.reference} onMouseDown={event => event.preventDefault()} onMouseEnter={() => setIndex(item)} onClick={() => choose(value)}>{value.agent ? `@${value.label} · ${t('agents.agent')}` : value.label}</button>)}{pathMention && loading && <LoadingState />}
+    {pathMention && error && !loading && <ErrorState compact title={t('project.pathLoadFailed')} description={error} onRetry={() => setRetry(value => value + 1)} />}
+    {!options.length && !loading && !error && <EmptyState compact title={t('project.noMatch')} description={t('project.noSearchResults')} />}</div>;
 }

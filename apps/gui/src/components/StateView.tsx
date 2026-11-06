@@ -37,3 +37,23 @@ export function ErrorState({ onRetry, retrying = false, retryLabel = '重试', a
     {action}
   </>} />;
 }
+
+export function LoadingState({ label, lines = 3 }: { label?: string; lines?: number }) {
+  const { t } = useI18n();
+  return <div className="loading-skeleton" role="status" aria-label={label ?? t('common.loading')} aria-busy="true">
+    <span className="sr-only">{label ?? t('common.loading')}</span>
+    {Array.from({ length: lines }, (_, index) => <i key={index} aria-hidden="true" />)}
+  </div>;
+}
+
+// Retry only on user input, with the failed operation's variables.
+export function MutationError<T>({ mutation, disabled = false, description }: {
+  mutation: { error: Error | null; isPending: boolean; variables: T | undefined; mutate: (variables: T) => void };
+  disabled?: boolean;
+  description?: string;
+}) {
+  const { t } = useI18n();
+  if (!mutation.error) return null;
+  return <ErrorState compact title={t('common.operationFailed')} description={description ?? mutation.error.message}
+    onRetry={() => { if (!disabled && !mutation.isPending) mutation.mutate(mutation.variables as T); }} retrying={disabled || mutation.isPending} />;
+}

@@ -45,3 +45,16 @@ it('allows retry after loading fails', async () => {
   fireEvent.click(screen.getByRole('button', { name: '重试' }));
   expect(await screen.findByLabelText('开机自启')).toBeChecked();
 });
+
+it('retries the failed save with the requested value without reloading settings', async () => {
+  render(<DesktopSettings />);
+  const autostart = await screen.findByLabelText('开机自启');
+  vi.mocked(invoke).mockRejectedValueOnce('registration failed');
+  fireEvent.click(autostart);
+  expect(await screen.findByRole('alert')).toHaveTextContent('registration failed');
+  expect(autostart).toBeChecked();
+  fireEvent.click(screen.getByRole('button', { name: '重试' }));
+  await waitFor(() => expect(autostart).not.toBeChecked());
+  expect(invoke).toHaveBeenLastCalledWith('set_desktop_autostart', { enabled: false });
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === 'desktop_settings')).toHaveLength(1);
+});

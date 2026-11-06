@@ -1,6 +1,6 @@
 # 适配器与 Core
 
-本文维护适配器契约、Core 与前端边界，并记录当前协议支持情况、配置行为和验证方式。项目入口见 [文档索引](README.md)。
+本文维护适配器契约、Core 与前端边界，并记录当前协议支持情况、配置行为和验证方式。项目入口见 [文档索引](index.md)。
 
 ## 统一契约
 
@@ -89,14 +89,14 @@ HTTP 客户端通过 `POST /agent-calls/<id>/cancel` 取消会话内的 Agent �
 
 Core 负责 SQLite、Agent 进程、会话、事件和审批状态，CLI 是当前调试前端。GUI 应通过 Core HTTP API、事件流或 `omnistream-core` 中适用于前端的审批与协议模型接入，不依赖终端渲染代码。
 
-源码开发可通过项目根目录的 Makefile 启动 Core，见[运行说明](../README.md#运行)。安装后也可直接运行 `omnistream serve`：
+源码开发可通过项目根目录的 Makefile 启动 Core，见[运行说明](configuration.md#core-与前端)。安装后也可直接运行 `omnistream serve`：
 
 ```bash
 cargo install --path crates/omnistream
 omnistream serve 127.0.0.1:4317
 ```
 
-GUI 的技术栈、启动及打包方式见 [项目说明](../README.md#core-与-gui)。
+GUI 技术栈与启动边界见[配置参考](configuration.md#core-与前端)，打包方式见[项目说明](README.md#构建与部署)。
 
 ## 验证方式与覆盖范围
 

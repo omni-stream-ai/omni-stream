@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { ExternalLink, LoaderCircle, RefreshCw, Reply, Send, Settings2, X } from 'lucide-react';
 import { slackApi, type PluginConnection, type SlackMessage } from '../lib/api';
 import { useI18n } from '../i18n';
-import { EmptyState, ErrorState } from './StateView';
+import { EmptyState, ErrorState, LoadingState, MutationError } from './StateView';
 import './SlackInbox.css';
 
 export function SlackInbox({ server, onConfigure }: { server: string; onConfigure: () => void }) {
@@ -16,11 +16,11 @@ export function SlackInbox({ server, onConfigure }: { server: string; onConfigur
   const connection = state.data?.connection;
   return <section className="slack-inbox" aria-label={t('slack.inbox')}>
     <header className="slack-inbox-heading"><div><h1>{t('slack.inbox')}</h1>{connection?.account && <p>{t('plugins.account', { account: connection.account })}</p>}</div><div className="slack-inbox-tools"><button type="button" className="ghost" onClick={onConfigure}><Settings2 size={14} />{t('plugins.manage')}</button><button type="button" className="ghost" disabled={state.isFetching} onClick={() => void state.refetch()}><RefreshCw size={14} />{t('slack.refresh')}</button></div></header>
-    {state.isPending && <p role="status">{t('common.loading')}</p>}
+    {state.isPending && <LoadingState />}
     {state.isError && <ErrorState compact title={t('slack.loadFailed')} description={state.error.message} retrying={state.isFetching} onRetry={() => void state.refetch()} />}
     {state.data && <>
       <div className="slack-listener-status" role="status"><span className={'connection-dot ' + state.data.listener.state} /><strong>{t('slack.state.' + state.data.listener.state)}</strong>{connection?.listen && <span>{t('slack.scope.' + (connection.listen_scope ?? 'related'))}</span>}{connection?.listen && <button type="button" className="ghost" disabled={reconnect.isPending} onClick={() => reconnect.mutate()}>{t('slack.reconnect')}</button>}</div>
-      {(state.data.listener.error || reconnect.error) && <p role="alert" className="error">{reconnect.error?.message ?? state.data.listener.error}</p>}
+      {(state.data.listener.error || reconnect.error) && <ErrorState compact title={t('slack.loadFailed')} description={reconnect.error?.message ?? state.data.listener.error ?? ''} onRetry={() => reconnect.mutate()} retrying={reconnect.isPending} />}
       {!connection?.listen && <p className="muted slack-inbox-note">{t('slack.enableHint')}</p>}
       {!channel ? <EmptyState title={t('slack.empty')} description={t('slack.emptyHint')} /> : <div className="slack-inbox-layout">
         <nav className="slack-channels" aria-label={t('slack.conversations')}>{state.data.conversations.map(item => <button type="button" className={channel.channel === item.channel ? 'selected' : ''} key={item.channel} onClick={() => setSelection(item.channel)}><strong>{t('slack.channelType.' + (['im', 'mpim', 'group'].includes(item.channel_type) ? item.channel_type : 'channel'))} · {item.channel}</strong><span>{item.text || t('slack.attachment')}</span></button>)}</nav>
@@ -50,10 +50,11 @@ function SlackChannel({ server, channel, connection, onSent }: { server: string;
   return <section className="slack-channel" aria-label={t('slack.messages')}>
     <header><strong>{channel}</strong><a href={'https://app.slack.com/client/' + encodeURIComponent(connection.team_id ?? '') + '/' + encodeURIComponent(channel)} target="_blank" rel="noreferrer">{t('slack.openSlack')}<ExternalLink size={12} /></a></header>
     <div className="slack-messages" ref={scroll} onScroll={() => { const element = scroll.current; if (element) stick.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}>
-      {messages.isPending && <p role="status">{t('common.loading')}</p>}
+      {messages.isPending && <LoadingState />}
       {messages.isError && <ErrorState compact title={t('slack.loadFailed')} description={messages.error.message} onRetry={() => void messages.refetch()} retrying={messages.isFetching} />}
       {cursor && <button type="button" className="ghost" disabled={page.isPending} onClick={() => { stick.current = false; page.mutate(cursor); }}>{t('slack.loadEarlier')}</button>}
-      {page.error && <p className="error" role="alert">{page.error.message}</p>}
+      {page.error && <MutationError mutation={page} />}
+      {messages.isSuccess && !rows.length && <EmptyState compact title={t('slack.empty')} description={t('slack.emptyHint')} />}
       {rows.map(message => <article key={message.ts} className={'slack-message' + (message.own ? ' own' : '')}>
         <header><strong>{message.own ? t('slack.you') : message.user || t('slack.unknownSender')}</strong><time dateTime={new Date(Number(message.ts) * 1000).toISOString()}>{new Date(Number(message.ts) * 1000).toLocaleString(locale)}</time>{message.edited && <span>{t('slack.edited')}</span>}</header>
         <p>{message.deleted ? t('slack.deleted') : message.text || t('slack.attachment')}</p>
@@ -66,7 +67,7 @@ function SlackChannel({ server, channel, connection, onSent }: { server: string;
       <label className="sr-only" htmlFor="slack-message-text">{t('slack.message')}</label><textarea id="slack-message-text" value={text} maxLength={4000} disabled={!available || send.isPending} placeholder={t('slack.messagePlaceholder')} rows={3} onChange={event => { setText(event.target.value); send.reset(); }} />
       {!available && <p className="muted">{t('slack.sendDisabled')}</p>}
       <div className="slack-send-footer"><p className="muted">{t('slack.sendPolicy')}</p><button type="submit" className="primary" disabled={!available || !text.trim() || send.isPending}>{send.isPending ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}{t('slack.send')}</button></div>
-      {send.error && <p className="error" role="alert">{send.error.message} {t('plugins.checkBeforeRetry')}</p>}
+      {send.error && <MutationError mutation={send} disabled={!available} description={send.error.message + ' ' + t('plugins.checkBeforeRetry')} />}
       {send.isSuccess && <p role="status" className="plugin-success">{send.data.sync_warning ?? t('slack.sent')}</p>}
     </form>
   </section>;

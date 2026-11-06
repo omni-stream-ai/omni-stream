@@ -87,7 +87,7 @@
 ## 配置与验证
 
 - 展开 provider 时从其 `base_url/models` 接口获取模型列表，后端缓存 5 分钟，支持手动刷新；无数据且正在加载时显示骨架屏，空列表和失败分别提示，失败后仅手动重试。
-- 思考等级按 provider 配置，不按具体模型配置。默认提供 `low`、`medium`、`high`；provider 可用 `reasoning_efforts` 覆盖默认值。模型接口若明确返回 provider 级思考等级则优先使用；`xhigh`、`extra high` 等特殊等级只有明确声明时显示。配置示例见[项目说明](../README.md#模型配置)。
+- 思考等级按 provider 配置，不按具体模型配置。默认提供 `low`、`medium`、`high`；provider 可用 `reasoning_efforts` 覆盖默认值。模型接口若明确返回 provider 级思考等级则优先使用；`xhigh`、`extra high` 等特殊等级只有明确声明时显示。配置示例见[模型配置](configuration.md#模型配置)。
 - 自定义 skill 从全局状态目录的 `skills/<名称>/SKILL.md` 和目标项目的 `.omnistream/skills/<名称>/SKILL.md` 加载，每次请求读取。
 - 附件单个不超过 10 MB，每条消息最多 20 个、合计 20 MB；图片和文本交给管理模型，外部 Agent 可通过保存的文件读取。其他文件格式能否直接交给模型取决于 provider 支持。
 - 图示支持 Mermaid 代码块，提示词与渲染端使用同一约定。

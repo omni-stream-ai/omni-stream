@@ -1,3 +1,4 @@
+import { ErrorState } from './StateView';
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -12,10 +13,12 @@ function Code({ text, language }: { text: string; language: string }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
-  const html = language && hljs.getLanguage(language) ? hljs.highlight(text, { language }).value : hljs.highlightAuto(text).value;
-  return <span className="code-block"><span className="code-toolbar"><span>{language || 'code'}</span><button type="button" title={t('code.copy')} aria-label={t('code.copy')} onClick={() => {
+  const copy = () => {
+    setError('');
     void navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => setError(t('code.copyFailed')));
-  }}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>{error && <span role="alert">{error}</span>}</span>{language === 'mermaid' ? <Diagram source={text} /> : <span className="code-content"><code dangerouslySetInnerHTML={{ __html: html }} /></span>}</span>;
+  };
+  const html = language && hljs.getLanguage(language) ? hljs.highlight(text, { language }).value : hljs.highlightAuto(text).value;
+  return <span className="code-block"><span className="code-toolbar"><span>{language || 'code'}</span><button type="button" title={t('code.copy')} aria-label={t('code.copy')} onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />}</button></span>{error && <ErrorState compact title={t('code.copyFailed')} description={error} onRetry={copy} />}{language === 'mermaid' ? <Diagram source={text} /> : <span className="code-content"><code dangerouslySetInnerHTML={{ __html: html }} /></span>}</span>;
 }
 
 export function MessageContent({ content, markdown = true }: { content: string; markdown?: boolean }) {

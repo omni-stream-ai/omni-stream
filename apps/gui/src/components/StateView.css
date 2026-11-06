@@ -10,3 +10,9 @@
 .state-view--compact .state-view__actions { margin-top: 12px; }
 .state-view__actions button { min-width: 84px; }
 @media (prefers-reduced-motion: reduce) { .state-view .spin { animation: none; } }
+
+.loading-skeleton { display: grid; gap: 10px; padding: 16px 8px; min-width: 0; width: 100%; }
+.loading-skeleton i { display: block; height: 14px; border-radius: 6px; background: var(--border, #e2e8e4); animation: skeleton-pulse 1.5s ease-in-out infinite; }
+.loading-skeleton i:last-child { width: 65%; }
+@keyframes skeleton-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .loading-skeleton i { animation: none; } }

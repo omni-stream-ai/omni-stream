@@ -12,4 +12,4 @@
 
 已安装并连接的应用由原生插件工具读取和操作，不需要先委派外部 Agent。实际工具、参数、凭据及写入审批规则见[插件市场](plugins.md)；账号连接只能在市场中显式配置，管理模型不接触令牌；获取令牌可通过[Agent 配置协助](plugins.md#agent-配置协助)启动独立会话，用户仍在配置表单填写凭据。长期任务默认交付渠道不因插件安装改变。
 
-Agent 执行指令见 [SKILL.md](../skills/omnistream-project-management/SKILL.md)，以内置方式加载。
+Agent 执行指令见 [SKILL.md](../../skills/omnistream-project-management/SKILL.md)，以内置方式加载。

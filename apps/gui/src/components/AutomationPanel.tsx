@@ -2,11 +2,11 @@ import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, automationApi, type Automation, type AutomationDraft, type AutomationSchedule, type AutomationTarget, type AutomationOptions as Options } from '../lib/api';
 import { useI18n } from '../i18n';
-import { EmptyState, ErrorState } from './StateView';
+import { EmptyState, ErrorState, LoadingState, MutationError } from './StateView';
 import { MessageContent } from './MessageContent';
 import { AutomationOptions } from './AutomationOptions';
 import { AutomationConfirmationCard } from './AutomationConfirmationCard';
-import { ApprovalForm } from './ConversationView';
+import { ApprovalForm } from './ApprovalForm';
 
 export function AutomationPanel({ server, conversation, onOpenConversation }: { server: string; conversation: string; onOpenConversation: (id: string) => void }) {
   const { t, locale } = useI18n();
@@ -64,12 +64,13 @@ export function AutomationPanel({ server, conversation, onOpenConversation }: { 
       <p className="muted">{t('automation.delivery')}</p>
       <label>{t('agents.forAutomation')}<select value={agentId ?? ''} onChange={event => setAgentId(event.target.value ? Number(event.target.value) : null)}><option value="">{t('agents.default')}</option>{agentId !== null && !agents.data?.some(agent => agent.id === agentId) && <option value={agentId}>#{agentId} · {t('automation.unavailable')}</option>}{agents.data?.map(agent => <option key={agent.id} value={agent.id}>@{agent.name}</option>)}</select></label>
       {agents.isError && <ErrorState compact title={t('agents.loadFailed')} description={agents.error.message} onRetry={() => void agents.refetch()} retrying={agents.isFetching} />}
+      {agents.isPending && <LoadingState lines={1} />}
       <AutomationOptions server={server} value={options} onChange={setOptions} />
-      {formError || save.error ? <p role="alert" className="error">{formError || save.error?.message}</p> : null}
+      {formError || save.error ? <ErrorState compact title={t('common.operationFailed')} description={formError || save.error?.message || ''} onRetry={() => formError ? setFormError('') : save.variables && save.mutate(save.variables)} retryLabel={formError ? t('common.edit') : t('common.retry')} retrying={save.isPending} /> : null}
       <div className="dialog-actions">{editing !== null && <button type="button" className="ghost" onClick={reset}>{t('common.cancel')}</button>}<button className="primary" disabled={save.isPending || !goal.trim()}>{save.isPending ? t('common.saving') : t(editing === null ? 'automation.createAndEnable' : 'common.save')}</button></div>
     </form>
-    {action.error && <p role="alert" className="error">{action.error.message}</p>}
-    {items.isPending ? <p role="status">{t('common.loading')}</p> : items.isError ? <ErrorState title={t('automation.loadFailed')} description={items.error.message} onRetry={() => void items.refetch()} retrying={items.isFetching} /> : !items.data.length ? <EmptyState compact title={t('automation.empty')} description={t('automation.example')} /> : items.data.map(item => {
+    {action.error && <MutationError mutation={action} />}
+    {items.isPending ? <LoadingState /> : items.isError ? <ErrorState title={t('automation.loadFailed')} description={items.error.message} onRetry={() => void items.refetch()} retrying={items.isFetching} /> : !items.data.length ? <EmptyState compact title={t('automation.empty')} description={t('automation.example')} /> : items.data.map(item => {
       const running = item.runs.some(run => run.status === 'running');
       const queued = item.manual_run_at != null;
       const invoke = (command: 'activate' | 'pause' | 'resume' | 'cancel' | 'run' | 'revoke') => action.mutate({ id: item.id, command });
@@ -94,7 +95,7 @@ export function AutomationPanel({ server, conversation, onOpenConversation }: { 
         {(approvals.data ?? []).filter(approval => item.runs.some(run => run.status === 'running' && run.scope && run.scope === approval.payload.scope)).map(approval => <ApprovalForm key={approval.id} approval={approval} agent={typeof approval.payload.agent === 'string' ? approval.payload.agent : item.title} task={item.id} onDone={refresh} />)}
         {!!item.authorization_audit?.length && <details><summary>{t('automation.authorizationAudit')}</summary>{item.authorization_audit.map((entry, i) => <p key={i}>{date(entry.at)} · {t('automation.authorization_' + entry.action)}</p>)}</details>}
         {!!item.calendar_audit?.length && <details><summary>{t('automation.audit')}</summary>{item.calendar_audit.map((entry, i) => <p key={i}>{date(entry.at)} · {entry.actor} · {entry.reason}</p>)}</details>}
-        <details><summary>{t('automation.history')} ({item.runs.length})</summary>{!item.runs.length && <p className="muted">{t('automation.noRuns')}</p>}{[...item.runs].reverse().map(run => <section className="automation-run" key={run.id}><strong>#{run.id} · {t(`automation.${run.status}`)} · {date(run.started_at)}</strong>{run.context?.time_window?.start !== undefined && <p>{t('automation.window')}: {date(run.context.time_window.start)} — {date(run.context.time_window.end ?? null)}</p>}{run.skip_reason && <p>{t('automation.skipped')}: {run.skip_reason}</p>}{run.deliveries?.map(receipt => <p key={receipt.target_id}>{receipt.target_id} · {targetLabel(run.context?.delivery_targets?.find(target => target.id === receipt.target_id))} · {t('automation.' + receipt.status)} · {receipt.attempts} {receipt.error && '· ' + receipt.error}</p>)}{run.generation_output && run.generation_output !== run.output && <details><summary>{t('automation.generated')}</summary><MessageContent content={run.generation_output} /></details>}<MessageContent content={run.output || t('automation.running')} /></section>)}</details>
+        <details><summary>{t('automation.history')} ({item.runs.length})</summary>{!item.runs.length && <EmptyState compact title={t('automation.noRuns')} description={t('automation.history')} />}{[...item.runs].reverse().map(run => <section className="automation-run" key={run.id}><strong>#{run.id} · {t(`automation.${run.status}`)} · {date(run.started_at)}</strong>{run.context?.time_window?.start !== undefined && <p>{t('automation.window')}: {date(run.context.time_window.start)} — {date(run.context.time_window.end ?? null)}</p>}{run.skip_reason && <p>{t('automation.skipped')}: {run.skip_reason}</p>}{run.deliveries?.map(receipt => <p key={receipt.target_id}>{receipt.target_id} · {targetLabel(run.context?.delivery_targets?.find(target => target.id === receipt.target_id))} · {t('automation.' + receipt.status)} · {receipt.attempts} {receipt.error && '· ' + receipt.error}</p>)}{run.generation_output && run.generation_output !== run.output && <details><summary>{t('automation.generated')}</summary><MessageContent content={run.generation_output} /></details>}<MessageContent content={run.output || t('automation.running')} /></section>)}</details>
       </article>;
     })}
   </div>;

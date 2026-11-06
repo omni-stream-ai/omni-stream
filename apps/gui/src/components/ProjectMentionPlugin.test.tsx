@@ -144,3 +144,23 @@ function EditorCapture({ onEditor }: { onEditor: (editor: ReturnType<typeof crea
   useEffect(() => { onEditor(editor as ReturnType<typeof createHeadlessEditor>); }, [editor, onEditor]);
   return null;
 }
+
+it('keeps path lookup failures separate from empty results and retries manually', async () => {
+  const search = vi.fn().mockRejectedValueOnce(new Error('path lookup offline')).mockResolvedValue(['/data/code']);
+  let editor: ReturnType<typeof createHeadlessEditor> | undefined;
+  render(<LexicalComposer initialConfig={{ namespace: 'path-error-test', nodes: [ReferenceNode], onError: error => { throw error; } }}>
+    <EditorCapture onEditor={value => { editor = value; }} />
+    <ProjectMentionPlugin projects={[]} searchProjects={search} onChoose={vi.fn()} />
+  </LexicalComposer>);
+  await waitFor(() => expect(editor).toBeDefined());
+  await act(async () => { editor!.update(() => { const paragraph = $createParagraphNode().append($createTextNode('@/data')); $getRoot().append(paragraph); paragraph.selectEnd(); }); });
+  expect(screen.getByRole('status')).toHaveAccessibleName('加载中...');
+  expect(await screen.findByRole('alert')).toHaveTextContent('path lookup offline');
+  expect(screen.queryByText('没有匹配的项目')).not.toBeInTheDocument();
+  expect(search).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: '重试' }));
+  expect(await screen.findByRole('option', { name: '/data/code' })).toBeVisible();
+  expect(search).toHaveBeenCalledTimes(2);
+  expect(search).toHaveBeenLastCalledWith('/data');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});

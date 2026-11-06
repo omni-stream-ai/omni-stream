@@ -1,5 +1,6 @@
 import { isTauri, invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
+import { ErrorState, LoadingState } from './StateView';
 import { useI18n } from '../i18n';
 
 type Settings = { allowLan: boolean; autostart: boolean };
@@ -9,12 +10,13 @@ export function DesktopSettings() {
   const [settings, setSettings] = useState<Settings>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [retry, setRetry] = useState<() => void>(() => () => {});
   const [changed, setChanged] = useState(false);
   const desktop = isTauri() && !/Android|iPhone|iPad/i.test(navigator.userAgent);
   async function load() {
     setBusy(true); setError('');
     try { setSettings(await invoke<Settings>('desktop_settings')); }
-    catch (e) { setError(String(e)); }
+    catch (e) { setError(String(e)); setRetry(() => () => void load()); }
     finally { setBusy(false); }
   }
   useEffect(() => { if (desktop) void load(); }, [desktop]);
@@ -25,7 +27,7 @@ export function DesktopSettings() {
       await invoke(key === 'allowLan' ? 'set_desktop_lan' : 'set_desktop_autostart', { enabled });
       setSettings(previous => previous && { ...previous, [key]: enabled });
       if (key === 'allowLan') setChanged(true);
-    } catch (e) { setError(String(e)); }
+    } catch (e) { setError(String(e)); setRetry(() => () => void update(key, enabled)); }
     finally { setBusy(false); }
   }
   return <section className="dialog-form desktop-settings" aria-label={t('desktop.title')}>
@@ -35,8 +37,8 @@ export function DesktopSettings() {
       <p className="muted">{t('desktop.lanHint')}</p>
       <label><input type="checkbox" checked={settings.autostart} disabled={busy} onChange={e => void update('autostart', e.target.checked)} />{t('desktop.autostart')}</label>
       <p className="muted">{t('desktop.autostartHint')}</p>
-    </> : busy ? <p role="status">{t('common.loading')}</p> : <button type="button" onClick={() => void load()}>{t('common.retry')}</button>}
+    </> : busy ? <LoadingState /> : null}
     {changed && <p role="status">{t('desktop.restart')}</p>}
-    {error && <p role="alert">{error}</p>}
+    {error && <ErrorState compact title={t('common.operationFailed')} description={error} onRetry={retry} retrying={busy} />}
   </section>;
 }

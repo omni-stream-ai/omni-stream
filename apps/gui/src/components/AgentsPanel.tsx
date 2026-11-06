@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type AgentDefinition, type NamedAgent } from '../lib/api';
 import { useI18n } from '../i18n';
-import { EmptyState, ErrorState } from './StateView';
+import { EmptyState, ErrorState, LoadingState, MutationError } from './StateView';
 
 const empty: AgentDefinition = { name: '', description: '', instructions: '', engine: '', plugins: null };
 const plugins = ['slack', 'github', 'notion', 'figma', 'chrome-devtools'];
@@ -24,6 +24,7 @@ export function AgentsPanel({ server }: { server: string }) {
   const engine = draft.engine || engines.data?.[0]?.name || '';
   return <div className="automation-panel agents-panel">
     <p className="muted">{t('agents.description')}</p>
+    {engines.isPending && <LoadingState lines={1} />}
     {engines.isError && <ErrorState compact title={t('agents.enginesFailed')} description={engines.error.message} onRetry={() => void engines.refetch()} retrying={engines.isFetching} />}
     {engines.isSuccess && !engines.data.length && <EmptyState compact title={t('agents.noEngine')} description={t('agents.configureEngine')} />}
     <form className="dialog-form" onSubmit={submit}>
@@ -35,14 +36,14 @@ export function AgentsPanel({ server }: { server: string }) {
       <label className="check"><input type="checkbox" checked={draft.plugins === null} onChange={event => setDraft({ ...draft, plugins: event.target.checked ? null : [] })} />{t('agents.inheritPlugins')}</label>
       {draft.plugins !== null && <fieldset><legend>{t('agents.allowedPlugins')}</legend>{plugins.map(plugin => <label className="check" key={plugin}><input type="checkbox" checked={draft.plugins?.includes(plugin) ?? false} onChange={event => setDraft({ ...draft, plugins: event.target.checked ? [...draft.plugins ?? [], plugin] : draft.plugins?.filter(value => value !== plugin) ?? [] })} />{t('plugins.names.' + plugin)}</label>)}</fieldset>}
       <p className="muted">{t('agents.permissionHint')}</p>
-      {save.error && <p className="error" role="alert">{save.error.message}</p>}
+      {save.error && <MutationError mutation={save} />}
       <div className="dialog-actions">{editing !== undefined && <button className="ghost" type="button" onClick={reset}>{t('common.cancel')}</button>}<button type="submit" className="primary" disabled={save.isPending || !engine || !draft.name.trim() || !draft.instructions.trim()}>{t(save.isPending ? 'common.loading' : editing === undefined ? 'agents.create' : 'common.save')}</button></div>
     </form>
-    {agents.isPending && <p role="status">{t('common.loading')}</p>}
+    {agents.isPending && <LoadingState />}
     {agents.isError && <ErrorState compact title={t('agents.loadFailed')} description={agents.error.message} onRetry={() => void agents.refetch()} retrying={agents.isFetching} />}
     {agents.isSuccess && !agents.data.length && <EmptyState compact title={t('agents.empty')} description={t('agents.emptyHint')} />}
     {agents.data?.map(agent => <article className="panel" key={agent.id}><div className="panel-heading"><div><h3>@{agent.name}</h3><p className="muted">{agent.description || t('agents.instructions')}</p></div><div className="panel-actions"><button type="button" className="ghost" disabled={save.isPending || remove.isPending} onClick={() => edit(agent)}>{t('agents.edit')}</button><button type="button" className="ghost danger" disabled={remove.isPending} onClick={() => remove.mutate(agent.id)}>{t('agents.delete')}</button></div></div><p className="muted">{t('agents.engine')}: {agent.engine} · {agent.plugins === null ? t('agents.inheritPlugins') : agent.plugins.length ? agent.plugins.map(id => t('plugins.names.' + id)).join(', ') : t('agents.noPlugins')}</p><AgentMemories server={server} id={agent.id} /></article>)}
-    {remove.error && <p className="error" role="alert">{remove.error.message}</p>}
+    {remove.error && <MutationError mutation={remove} />}
   </div>;
 }
 
@@ -58,7 +59,7 @@ function AgentMemories({ server, id }: { server: string; id: number }) {
     {open && <div>
       <p className="muted">{t('agents.memoryHint')}</p>
       <button type="button" className="ghost" disabled={memories.isFetching} onClick={() => void memories.refetch()}>{t(memories.isFetching ? 'common.loading' : 'agents.refreshMemory')}</button>
-      {memories.isPending && <p role="status">{t('common.loading')}</p>}
+      {memories.isPending && <LoadingState />}
       {memories.isError && <ErrorState compact title={t('agents.memoryFailed')} description={memories.error.message} onRetry={() => void memories.refetch()} retrying={memories.isFetching} />}
       {memories.isSuccess && !memories.data.length && <EmptyState compact title={t('agents.memoryEmpty')} description={t('agents.memoryEmptyHint')} />}
       {memories.data?.map(memory => <article key={memory.key}>
@@ -66,7 +67,7 @@ function AgentMemories({ server, id }: { server: string; id: number }) {
         <p className="agent-memory-content">{memory.content}</p>
         <p className="muted">{t('agents.memoryUpdated', { time: new Date(memory.updated_at * 1000).toLocaleString(locale) })}</p>
       </article>)}
-      {remove.error && <p role="alert" className="error">{remove.error.message}</p>}
+      {remove.error && <MutationError mutation={remove} />}
     </div>}
   </details>;
 }
