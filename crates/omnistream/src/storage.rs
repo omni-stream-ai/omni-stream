@@ -13,6 +13,12 @@ pub struct Project {
 
 pub struct Store(Connection);
 impl Store {
+    pub fn notification_snapshot(&self, conversation: &str) -> Result<serde_json::Value, String> {
+        crate::notifications::snapshot(
+            &self.0,
+            serde_json::json!(["chat", conversation]).to_string(),
+        )
+    }
     pub fn claim_approved_plugin(&self, id: i64) -> Result<bool, String> {
         self.0.execute("UPDATE approvals SET status='executing' WHERE id=?1 AND action='plugin.invoke' AND status='approved'", [id])
             .map(|count|count==1).map_err(|e|e.to_string())
@@ -88,6 +94,9 @@ impl Store {
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);",
         )
         .map_err(|e| e.to_string())?;
+        crate::conversation_list::schema(&conn)?;
+        crate::notifications::schema(&conn)?;
+        crate::push::schema(&conn)?;
         Ok(Self(conn))
     }
     pub fn register_project(&self, path: &Path) -> Result<(), String> {
@@ -243,6 +252,15 @@ impl Store {
         let rows = statement.query_map([id], |row| { let data: String = row.get(3)?; Ok(serde_json::json!({"id":row.get::<_,i64>(0)?,"created_at":row.get::<_,String>(1)?,"kind":row.get::<_,String>(2)?,"data":serde_json::from_str::<serde_json::Value>(&data).unwrap_or(serde_json::Value::Null)})) }).map_err(|e| e.to_string())?;
         rows.map(|row| row.map_err(|e| e.to_string())).collect()
     }
+    pub fn conversation_exists(&self, id: &str) -> Result<bool, String> {
+        self.0
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversation_activity WHERE id=?1)",
+                [id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())
+    }
     pub fn conversation(&self, project: &str) -> Result<Vec<serde_json::Value>, String> {
         use rusqlite::OptionalExtension;
         let data: Option<String> = self
@@ -378,12 +396,18 @@ impl Store {
     pub fn conversations(&self) -> Result<Vec<String>, String> {
         let mut statement = self
             .0
-            .prepare("SELECT project FROM conversations UNION SELECT id FROM conversation_settings ORDER BY 1")
+            .prepare("SELECT id FROM conversation_activity ORDER BY updated_at DESC,id DESC")
             .map_err(|e| e.to_string())?;
         let rows = statement
             .query_map([], |row| row.get::<_, String>(0))
             .map_err(|e| e.to_string())?;
         rows.map(|row| row.map_err(|e| e.to_string())).collect()
+    }
+    pub fn conversation_page(
+        &self,
+        request: &crate::conversation_list::Request,
+    ) -> Result<crate::conversation_list::Page, String> {
+        crate::conversation_list::list(&self.0, request)
     }
     pub fn save_conversation(
         &self,
@@ -397,12 +421,47 @@ impl Store {
     pub fn save(&mut self, task: &AgentExecution) -> Result<(), String> {
         let data = serde_json::to_string(task).map_err(|e| e.to_string())?;
         let tx = self.0.transaction().map_err(|e| e.to_string())?;
+        let previous: Option<String> = tx
+            .query_row(
+                "SELECT json_extract(data,'$.status') FROM tasks WHERE id=?1",
+                [task.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
         tx.execute("INSERT INTO tasks(id,data) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET data=excluded.data", params![task.id, data]).map_err(|e| e.to_string())?;
         tx.execute(
             "INSERT INTO events(task_id,kind,data) VALUES (?1,'task.saved',?2)",
             params![task.id, data],
         )
         .map_err(|e| e.to_string())?;
+        if task.transient
+            && previous
+                .as_deref()
+                .is_some_and(|status| status != task.status)
+            && matches!(
+                task.status.as_str(),
+                "unverified" | "succeeded" | "completed" | "failed" | "interrupted"
+            )
+        {
+            let conversation: Option<String> = tx.query_row(
+                "SELECT conversation FROM conversation_calls_v2 WHERE task_id=?1 ORDER BY conversation LIMIT 1",
+                [task.id], |row| row.get(0),
+            ).optional().map_err(|e| e.to_string())?;
+            if let Some(conversation) = conversation {
+                crate::notifications::insert(
+                    &tx,
+                    &format!("call:{}", task.id),
+                    if matches!(task.status.as_str(), "failed" | "interrupted") {
+                        "task_failed"
+                    } else {
+                        "task_completed"
+                    },
+                    &task.title,
+                    &conversation,
+                )?;
+            }
+        }
         tx.commit().map_err(|e| e.to_string())
     }
     pub fn create_approval(
@@ -412,13 +471,42 @@ impl Store {
         payload: &serde_json::Value,
     ) -> Result<i64, String> {
         let data = serde_json::to_string(payload).map_err(|e| e.to_string())?;
-        self.0
-            .execute(
-                "INSERT INTO approvals(task_id,action,payload,status) VALUES (?1,?2,?3,'pending')",
-                params![task_id, action, data],
+        let tx = self.0.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO approvals(task_id,action,payload,status) VALUES (?1,?2,?3,'pending')",
+            params![task_id, action, data],
+        )
+        .map_err(|e| e.to_string())?;
+        let id = tx.last_insert_rowid();
+        let conversation = if let Some(id) = payload["conversation"].as_str() {
+            Some(id.to_string())
+        } else {
+            tx.query_row("SELECT conversation FROM conversation_calls_v2 WHERE task_id=?1 ORDER BY conversation LIMIT 1",
+                [task_id], |row| row.get::<_,String>(0)).optional().map_err(|e|e.to_string())?
+        };
+        if let Some(conversation) = conversation {
+            crate::notifications::insert(
+                &tx,
+                &format!("approval:{id}"),
+                "approval_pending",
+                "",
+                &conversation,
+            )?;
+            tx.execute(
+                "UPDATE notifications SET approval_id=?1 WHERE event_key=?2",
+                params![id, format!("approval:{id}")],
             )
             .map_err(|e| e.to_string())?;
-        Ok(self.0.last_insert_rowid())
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+    pub fn notifications(
+        &self,
+        input: crate::notifications::Request,
+        slack: Option<&crate::plugin_connections::Connection>,
+    ) -> Result<serde_json::Value, String> {
+        crate::notifications::poll(&self.0, input, slack)
     }
     pub fn approvals(&self, status: Option<&str>) -> Result<Vec<Approval>, String> {
         let mut statement = self.0.prepare("SELECT id,task_id,action,payload,status FROM approvals WHERE (?1 IS NULL OR status=?1) ORDER BY id").map_err(|e| e.to_string())?;

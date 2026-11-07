@@ -5,14 +5,16 @@ import { slackApi, type PluginConnection, type SlackMessage } from '../lib/api';
 import { useI18n } from '../i18n';
 import { EmptyState, ErrorState, LoadingState, MutationError } from './StateView';
 import './SlackInbox.css';
+import { useViewedNotifications, type ReadNotifications } from '../lib/useViewedNotifications';
 
-export function SlackInbox({ server, onConfigure }: { server: string; onConfigure: () => void }) {
+export function SlackInbox({ server, onConfigure, requestedChannel, onRead }: { onRead?: ReadNotifications; server: string; onConfigure: () => void; requestedChannel?: string | null }) {
   const { t } = useI18n();
   const state = useQuery({ queryKey: ['slack-inbox', server], queryFn: slackApi.inbox, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false, refetchInterval: query => query.state.status === 'error' ? false : 3000 });
   const reconnect = useMutation({ mutationFn: slackApi.reconnect, retry: false, onSuccess: () => void state.refetch() });
-  const [selection, setSelection] = useState('');
+  const [selection, setSelection] = useState(requestedChannel ?? '');
+  useEffect(() => { if (requestedChannel) setSelection(requestedChannel); }, [requestedChannel]);
   const channel = state.data?.conversations.find(item => item.channel === selection) ?? state.data?.conversations[0];
-  useEffect(() => { if (channel && channel.channel !== selection) setSelection(channel.channel); }, [channel?.channel, selection]);
+  useEffect(() => { if (channel && channel.channel !== selection && !requestedChannel) setSelection(channel.channel); }, [channel?.channel, selection, requestedChannel]);
   const connection = state.data?.connection;
   return <section className="slack-inbox" aria-label={t('slack.inbox')}>
     <header className="slack-inbox-heading"><div><h1>{t('slack.inbox')}</h1>{connection?.account && <p>{t('plugins.account', { account: connection.account })}</p>}</div><div className="slack-inbox-tools"><button type="button" className="ghost" onClick={onConfigure}><Settings2 size={14} />{t('plugins.manage')}</button><button type="button" className="ghost" disabled={state.isFetching} onClick={() => void state.refetch()}><RefreshCw size={14} />{t('slack.refresh')}</button></div></header>
@@ -24,13 +26,13 @@ export function SlackInbox({ server, onConfigure }: { server: string; onConfigur
       {!connection?.listen && <p className="muted slack-inbox-note">{t('slack.enableHint')}</p>}
       {!channel ? <EmptyState title={t('slack.empty')} description={t('slack.emptyHint')} /> : <div className="slack-inbox-layout">
         <nav className="slack-channels" aria-label={t('slack.conversations')}>{state.data.conversations.map(item => <button type="button" className={channel.channel === item.channel ? 'selected' : ''} key={item.channel} onClick={() => setSelection(item.channel)}><strong>{t('slack.channelType.' + (['im', 'mpim', 'group'].includes(item.channel_type) ? item.channel_type : 'channel'))} · {item.channel}</strong><span>{item.text || t('slack.attachment')}</span></button>)}</nav>
-        <SlackChannel key={[server, connection?.team_id, connection?.user_id, channel.channel].join(':')} server={server} channel={channel.channel} connection={connection!} onSent={() => void state.refetch()} />
+        <SlackChannel key={[server, connection?.team_id, connection?.user_id, channel.channel].join(':')} server={server} channel={channel.channel} connection={connection!} onSent={() => void state.refetch()} ready={state.isSuccess} onRead={onRead} />
       </div>}
     </>}
   </section>;
 }
 
-function SlackChannel({ server, channel, connection, onSent }: { server: string; channel: string; connection: PluginConnection; onSent: () => void }) {
+function SlackChannel({ server, channel, connection, onSent, ready, onRead }: { ready: boolean; onRead?: ReadNotifications; server: string; channel: string; connection: PluginConnection; onSent: () => void }) {
   const { t, locale } = useI18n();
   const messages = useQuery({ queryKey: ['slack-messages', server, connection.team_id, connection.user_id, channel], queryFn: () => slackApi.messages(channel), retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false, refetchInterval: query => query.state.status === 'error' ? false : 3000 });
   const [older, setOlder] = useState<SlackMessage[]>([]);
@@ -47,6 +49,7 @@ function SlackChannel({ server, channel, connection, onSent }: { server: string;
   const rows = [...new Map([...older, ...(messages.data?.messages ?? [])].map(item => [item.ts, item])).values()].sort((a, b) => Number(a.ts) - Number(b.ts));
   const cursor = before === undefined ? messages.data?.next_before : before;
   useEffect(() => { if (stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [messages.data, channel]);
+  useViewedNotifications(scroll, messages.data?.notification_snapshot, ready && messages.isSuccess, onRead);
   return <section className="slack-channel" aria-label={t('slack.messages')}>
     <header><strong>{channel}</strong><a href={'https://app.slack.com/client/' + encodeURIComponent(connection.team_id ?? '') + '/' + encodeURIComponent(channel)} target="_blank" rel="noreferrer">{t('slack.openSlack')}<ExternalLink size={12} /></a></header>
     <div className="slack-messages" ref={scroll} onScroll={() => { const element = scroll.current; if (element) stick.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}>

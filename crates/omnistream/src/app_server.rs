@@ -204,6 +204,9 @@ pub fn run(
     let cwd = request.cwd.canonicalize().map_err(|e| e.to_string())?;
     let mut command = Command::new(&agent.command);
     command.args(agent.app_server_args()?);
+    if let Some(model) = &agent.inherited_model {
+        model.configure(&mut command)?;
+    }
     command
         .current_dir(&cwd)
         .stdin(Stdio::piped())
@@ -242,6 +245,9 @@ pub fn run(
     rpc.call(1, "initialize", json!({"clientInfo":{"name":"omnistream","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":false}}), host)?;
     rpc.send(json!({"method":"initialized","params":{}}))?;
     let mut params = json!({"cwd":cwd});
+    if let Some(model) = &agent.inherited_model {
+        model.thread_params(&mut params)?;
+    }
     match config.approval_mode() {
         ApprovalMode::Default => {}
         ApprovalMode::Safe => {
@@ -290,12 +296,13 @@ pub fn run(
             data: json!({"source_thread_id":request.session,"thread_id":thread,"reason":"active_writer","message":"原线程被其他入口占用，已创建保留历史的独立分支；后续对话使用新线程。"}),
         })?;
     }
-    let result = rpc.call(
-        if forked { 4 } else { 3 },
-        "turn/start",
-        json!({"threadId":thread,"input":[{"type":"text","text":request.prompt}]}),
-        host,
-    )?;
+    let mut turn_params =
+        json!({"threadId":thread,"input":[{"type":"text","text":request.prompt}]});
+    if let Some(model) = &agent.inherited_model {
+        turn_params["model"] = json!(model.model()?);
+        turn_params["effort"] = json!(model.effort());
+    }
+    let result = rpc.call(if forked { 4 } else { 3 }, "turn/start", turn_params, host)?;
     let turn = result["turn"]["id"]
         .as_str()
         .ok_or("App Server 缺少 turn.id")?
@@ -338,6 +345,7 @@ mod tests {
     use crate::adapter::{tests::RecordingHost, ApprovalDecision};
     fn agent(script: &str) -> AgentConfig {
         AgentConfig {
+            inherited_model: None,
             plugin_transport: Default::default(),
             mcp_args: Vec::new(),
             plugin_tools: Default::default(),
@@ -614,6 +622,7 @@ while read unexpected; do printf '%s\n' "$unexpected" >> calls.jsonl; echo '{{"i
                 delay_ms: 0,
                 disconnect: false,
                 body: Value::Null,
+                expect_bearer: Some("inherited-fixture-key".into()),
                 events: vec![
                     json!({"type":"response.created","response":{"id":"resp_1","status":"in_progress","output":[]}}),
                     json!({"type":"response.output_item.added","output_index":0,"item":item}),
@@ -643,7 +652,7 @@ while read unexpected; do printf '%s\n' "$unexpected" >> calls.jsonl; echo '{{"i
         ];
         let settings = [
             "model_provider=\"mock\"".to_string(),
-            "model=\"mock\"".into(),
+            "model=\"native-model-must-not-be-used\"".into(),
             "model_providers.mock.name=\"Mock\"".into(),
             format!("model_providers.mock.base_url=\"{}/v1\"", server.url),
             "model_providers.mock.wire_api=\"responses\"".into(),
@@ -652,9 +661,25 @@ while read unexpected; do printf '%s\n' "$unexpected" >> calls.jsonl; echo '{{"i
             "model_providers.mock.request_max_retries=0".into(),
             "model_providers.mock.stream_max_retries=0".into(),
         ];
+        let selected: Config = toml::from_str(&format!(
+            r#"
+model_provider = "selected"
+model = "mock"
+model_reasoning_effort = "low"
+[model_providers.selected]
+base_url = "{}/v1"
+wire_api = "responses"
+[model_providers.selected.auth]
+command = "printf"
+args = ["inherited-fixture-key"]
+"#,
+            server.url
+        ))
+        .unwrap();
         let config_file = dir.path().join("mock.config.toml");
         std::fs::write(&config_file, settings.join("\n")).unwrap();
         let agent = AgentConfig {
+            inherited_model: crate::delegated_model::SelectedModel::capture(&selected),
             plugin_transport: Default::default(),
             mcp_args: Vec::new(),
             plugin_tools: Default::default(),
@@ -754,6 +779,8 @@ while read unexpected; do printf '%s\n' "$unexpected" >> calls.jsonl; echo '{{"i
         assert_eq!(output, "branch answer");
         let requests = server.requests.lock().unwrap();
         assert_eq!(requests.len(), 4);
+        assert!(requests.iter().all(|r| r["body"]["model"] == "mock"));
+        assert_eq!(requests[0]["body"]["reasoning"]["effort"], "low");
         assert!(requests[1]["body"].to_string().contains("first answer"));
         assert!(requests[2]["body"].to_string().contains("second answer"));
         assert!(requests[3]["body"].to_string().contains("forked answer"));

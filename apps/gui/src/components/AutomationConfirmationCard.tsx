@@ -5,9 +5,10 @@ import { automationApi, type AutomationConfirmation } from '../lib/api';
 import { useI18n } from '../i18n';
 import { ErrorState, LoadingState, MutationError } from './StateView';
 
-export function AutomationConfirmationCard({ server, automationId, confirmationId, onOpenConversation }: { server: string; automationId: number; confirmationId: number; onOpenConversation?: (id: string) => void }) {
+export function AutomationConfirmationCard({ server, automationId, confirmationId, onOpenConversation, onReady }: { onReady?: (key: string, ready: boolean) => void; server: string; automationId: number; confirmationId: number; onOpenConversation?: (id: string) => void }) {
   const { t } = useI18n();
   const query = useQuery({ queryKey: ['automation-confirmation', server, automationId, confirmationId], queryFn: () => automationApi.confirmation(automationId, confirmationId), retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false, refetchInterval: query => query.state.status === 'error' || (query.state.data && !['pending', 'approved', 'ready'].includes(query.state.data.status)) ? false : 2000 });
+  useEffect(() => { onReady?.(`${automationId}:${confirmationId}`, query.isSuccess); }, [automationId, confirmationId, query.isSuccess, onReady]);
   if (query.isError) return <ErrorState compact title={t('confirmation.loadFailed')} description={query.error.message} onRetry={() => void query.refetch()} retrying={query.isFetching} />;
   if (!query.data) return <LoadingState />;
   return <ConfirmationEditor onOpenConversation={onOpenConversation} server={server} automationId={automationId} review={query.data} refresh={() => void query.refetch()} />;

@@ -5,7 +5,14 @@ import { DesktopSettings } from './DesktopSettings';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 beforeEach(() => { localStorage.clear(); vi.mocked(isTauri).mockReturnValue(true); vi.mocked(invoke).mockResolvedValue({ allowLan: false, autostart: true }); });
-afterEach(() => { cleanup(); vi.resetAllMocks(); });
+afterEach(() => { cleanup(); delete window.__OMNISTREAM_MOBILE__; vi.resetAllMocks(); });
+
+it('hides host settings in native mobile apps, including iPads using a desktop user agent', () => {
+  window.__OMNISTREAM_MOBILE__ = true;
+  render(<DesktopSettings />);
+  expect(screen.queryByRole('checkbox')).toBeNull();
+  expect(invoke).not.toHaveBeenCalled();
+});
 
 it('does not expose host settings in the browser', () => {
   vi.mocked(isTauri).mockReturnValue(false);

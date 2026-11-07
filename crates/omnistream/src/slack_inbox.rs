@@ -19,6 +19,7 @@ impl Inbox {
             CREATE TABLE IF NOT EXISTS slack_event_ids (team TEXT NOT NULL, owner TEXT NOT NULL, event_id TEXT NOT NULL, PRIMARY KEY(team,owner,event_id));
             CREATE TABLE IF NOT EXISTS slack_threads (team TEXT NOT NULL, owner TEXT NOT NULL, channel TEXT NOT NULL, ts TEXT NOT NULL, PRIMARY KEY(team,owner,channel,ts));")
             .map_err(|e| e.to_string())?;
+        crate::notifications::schema(&db)?;
         Ok(Self(db))
     }
 
@@ -173,6 +174,17 @@ impl Inbox {
             thread_ts=excluded.thread_ts,version=excluded.version,deleted=excluded.deleted,edited=excluded.edited
             WHERE CAST(excluded.version AS REAL)>=CAST(slack_messages.version AS REAL)",
             params![team,owner,channel,channel_type,ts,sender,if deleted { "" } else { &text },thread,version,deleted,edited]).map_err(|e| e.to_string())?;
+        if !existing && !sent && !edited && !deleted && sender != owner {
+            tx.execute("INSERT OR IGNORE INTO notifications(event_key,kind,title,team,owner,channel) VALUES (?1,'inbox_message',?2,?3,?4,?2)",
+                params![format!("slack:{team}:{owner}:{channel}:{ts}"),channel,team,owner]).map_err(|e|e.to_string())?;
+        }
+        if deleted {
+            tx.execute(
+                "UPDATE notifications SET kind='dismissed' WHERE event_key=?1",
+                [format!("slack:{team}:{owner}:{channel}:{ts}")],
+            )
+            .map_err(|e| e.to_string())?;
+        }
         if related || sent {
             tx.execute(
                 "INSERT OR IGNORE INTO slack_threads(team,owner,channel,ts) VALUES (?1,?2,?3,?4)",
@@ -210,6 +222,14 @@ impl Inbox {
         {
             return Err("收件箱分页参数无效".into());
         }
+        let notification_snapshot = if before.is_none() {
+            Some(crate::notifications::snapshot(
+                &self.0,
+                json!(["slack", team, owner, channel]).to_string(),
+            )?)
+        } else {
+            None
+        };
         let mut query = self.0.prepare("SELECT id,ts,sender,text,thread_ts,deleted,edited FROM slack_messages
             WHERE team=?1 AND owner=?2 AND channel=?3 AND (?4 IS NULL OR CAST(ts AS REAL)<CAST(?4 AS REAL)) ORDER BY CAST(ts AS REAL) DESC,id DESC LIMIT ?5").map_err(|e| e.to_string())?;
         let rows = query.query_map(params![team,owner,channel,before,limit+1], |row| { let sender: String = row.get(2)?; Ok(json!({"id":row.get::<_,i64>(0)?,"ts":row.get::<_,String>(1)?,"user":sender,"own":sender == owner,"text":row.get::<_,String>(3)?,"thread_ts":row.get::<_,Option<String>>(4)?,"deleted":row.get::<_,bool>(5)?,"edited":row.get::<_,bool>(6)?})) }).map_err(|e| e.to_string())?;
@@ -220,7 +240,7 @@ impl Inbox {
         messages.truncate(limit as usize);
         messages.reverse();
         Ok(
-            json!({"next_before":if more { messages.first().map(|m| m["ts"].clone()) } else { None },"messages":messages}),
+            json!({"notification_snapshot":notification_snapshot,"next_before":if more { messages.first().map(|m| m["ts"].clone()) } else { None },"messages":messages}),
         )
     }
 }

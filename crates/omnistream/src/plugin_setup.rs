@@ -241,6 +241,7 @@ pub fn api(
         project,
         conversation.clone(),
         request,
+        None,
     )
     .map_err(|e| error("500 Internal Server Error", e))?;
     Ok(json!({"conversation":conversation,"call_id":call_id}))
@@ -328,6 +329,7 @@ pub fn continue_conversation(
         project,
         conversation.into(),
         request.into(),
+        None,
     )?;
     Ok(format!("Agent #{call_id}"))
 }

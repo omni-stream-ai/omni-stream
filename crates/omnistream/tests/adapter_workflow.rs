@@ -36,6 +36,9 @@ fi
 echo '{"id":2,"result":{"thread":{"id":"persistent-thread"}}}'
 read turn
 echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
+echo '{"id":"web-read","method":"item/commandExecution/requestApproval","params":{"threadId":"persistent-thread","turnId":"turn-1","command":"curl -q https://example.com"}}'
+read web_decision
+case "$web_decision" in *'"decision":"accept"'*) ;; *) exit 4;; esac
 echo '{"id":"approve","method":"item/commandExecution/requestApproval","params":{"threadId":"persistent-thread","turnId":"turn-1","command":"inspect"}}'
 read decision
 case "$decision" in *'"decision":"accept"'*) ;; *) exit 3;; esac

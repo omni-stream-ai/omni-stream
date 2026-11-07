@@ -3,3 +3,8 @@ packages:
   - packages/*
   - plugins/*
   - workers/*
+
+# Firebase App uses the packages' published JavaScript; no install scripts needed.
+allowBuilds:
+  '@firebase/util': false
+  protobufjs: false

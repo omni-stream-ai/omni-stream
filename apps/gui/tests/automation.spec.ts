@@ -1,15 +1,35 @@
 import { test, expect } from '@playwright/test';
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 let core: ChildProcess;
+let model: Server;
 let directory: string;
 let endpoint: string;
 test.beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), 'automation-e2e-'));
-  await writeFile(join(directory, 'config.toml'), "[agents.default]\ncommand='fixture'\nprotocol='mock'\n");
+  model = createServer((req, res) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      const input = JSON.stringify(JSON.parse(body));
+      const failed = input.includes('失败草案');
+      const decision = input.includes('工具调用 propose_automation')
+        ? { kind: 'reply', message: failed ? '草案未保存。' : '草案已保存，尚待启用，请点击草案入口查看并确认。' }
+        : { kind: 'tool', name: 'propose_automation', args: { title: '聊天草案', goal: failed ? '' : '核实来源并整理摘要', schedule: { kind: 'interval', seconds: 86400 }, confirmation: { before_seconds: 600, on_timeout: 'wait' } } };
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ output_text: JSON.stringify(decision) }));
+    });
+  });
+  await new Promise<void>(done => model.listen(0, '127.0.0.1', done));
+  const modelPort = (model.address() as { port: number }).port;
+  await writeFile(join(directory, 'config.toml'), [
+    'model_provider="fixture"', 'model="test-model"', '[model_providers.fixture]',
+    'base_url="http://127.0.0.1:' + modelPort + '"', '[model_providers.fixture.auth]',
+    'command="printf"', 'args=["fixture-key"]', '[agents.default]', 'command="fixture"', 'protocol="mock"',
+  ].join('\n'));
   const listener = createServer();
   await new Promise<void>(done => listener.listen(0, '127.0.0.1', done));
   const address = listener.address() as { port: number };
@@ -21,13 +41,15 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => {
   if (core && core.exitCode === null) { core.kill(); await new Promise(done => core.once('exit', done)); }
+  await new Promise<void>(done => model.close(() => done()));
   await rm(directory, { recursive: true, force: true });
 });
 test('create a general delegation, deliver a run, pause, edit and restore on mobile', async ({ page }) => {
   await page.addInitScript(url => { localStorage.setItem('omnistream.url', url); localStorage.setItem('omnistream.locale', 'zh-CN'); }, endpoint);
   await page.goto('/chat/automation-inbox');
   await page.getByRole('button', { name: '长期任务', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '长期任务' });
+  const dialog = page.locator('dialog.automation-dialog');
+  await dialog.getByRole('button', { name: '新建长期委托', exact: true }).click();
   await dialog.getByLabel('任务标题').fill('AI 日报');
   await dialog.getByLabel('委托内容').fill('收集 AI 新闻，核实来源后整理日报');
   await dialog.getByLabel('触发方式').selectOption('interval');
@@ -52,6 +74,7 @@ test('create a general delegation, deliver a run, pause, edit and restore on mob
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: '切换侧栏' }).click();
   await page.getByRole('button', { name: '长期任务', exact: true }).click();
+  await page.getByRole('button', { name: '查看 AI 日报 的详情', exact: true }).click();
   await expect(card.getByText('已暂停', { exact: true })).toBeVisible();
   await card.getByRole('button', { name: '恢复', exact: true }).click();
   await expect(card.getByText('已启用', { exact: true })).toBeVisible();
@@ -62,7 +85,8 @@ test('calendar overrides and time windows persist and reject a future cutoff', a
   await page.addInitScript(url => { localStorage.setItem('omnistream.url', url); localStorage.setItem('omnistream.locale', 'zh-CN'); }, endpoint);
   await page.goto('/chat/calendar-inbox');
   await page.getByRole('button', { name: '长期任务', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '长期任务' });
+  const dialog = page.locator('dialog.automation-dialog');
+  await dialog.getByRole('button', { name: '新建长期委托', exact: true }).click();
   await dialog.getByLabel('任务标题').fill('Calendar report');
   await dialog.getByLabel('委托内容').fill('Collect progress using the supplied window');
   await dialog.getByLabel('执行时间').fill('11:57:00');
@@ -85,6 +109,7 @@ test('calendar overrides and time windows persist and reject a future cutoff', a
   await expect(card).toContainText('2026-11-07');
   await page.reload();
   await page.getByRole('button', { name: '长期任务', exact: true }).click();
+  await page.getByRole('button', { name: '查看 Calendar report 的详情', exact: true }).click();
   await card.getByRole('button', { name: '修改', exact: true }).click();
   await expect(dialog.getByLabel('执行时间')).toHaveValue('12:05:17');
   await dialog.getByText('日历、统计窗口与投递', { exact: true }).click();
@@ -98,7 +123,8 @@ test('review each manual occurrence, discuss with the task Agent, revise and exp
   await page.addInitScript(url => { localStorage.setItem('omnistream.url', url); localStorage.setItem('omnistream.locale', 'zh-CN'); }, endpoint);
   await page.goto('/chat/approval-inbox');
   await page.getByRole('button', { name: '长期任务', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '长期任务' });
+  const dialog = page.locator('dialog.automation-dialog');
+  await dialog.getByRole('button', { name: '新建长期委托', exact: true }).click();
   await dialog.getByLabel('任务标题').fill('逐次确认日报');
   await dialog.getByLabel('委托内容').fill('Original review instructions');
   await dialog.getByLabel('触发方式').selectOption('interval');
@@ -167,7 +193,8 @@ test('unconfirmed-run option persists and executes the original content at the s
   await page.addInitScript(url => { localStorage.setItem('omnistream.url', url); localStorage.setItem('omnistream.locale', 'zh-CN'); }, endpoint);
   await page.goto('/chat/auto-timeout-inbox');
   await page.getByRole('button', { name: '长期任务', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '长期任务' });
+  const dialog = page.locator('dialog.automation-dialog');
+  await dialog.getByRole('button', { name: '新建长期委托', exact: true }).click();
   await dialog.getByLabel('任务标题').fill('未确认也按时执行测试');
   await dialog.getByLabel('委托内容').fill('Original scheduled content');
   const scheduled = new Date(Date.now() + 16000);
@@ -199,4 +226,79 @@ test('unconfirmed-run option persists and executes the original content at the s
   await expect(message.getByText('Original scheduled content', { exact: true })).toBeVisible();
   await page.reload();
   await expect(message.getByText('已按未确认策略触发', { exact: true })).toBeVisible();
+});
+
+
+test('chat draft opens only its current task, supports edit and activation, and survives reload on mobile', async ({ page }) => {
+  await page.addInitScript(url => { localStorage.setItem('omnistream.url', url); localStorage.setItem('omnistream.locale', 'zh-CN'); }, endpoint);
+  await page.goto('/chat/draft-entry');
+  await page.getByLabel('消息', { exact: true }).fill('创建聊天草案，每天整理摘要');
+  await page.getByLabel('消息', { exact: true }).press('Enter');
+  const entry = page.locator('.automation-reference');
+  await expect(entry).toHaveCount(1);
+  await expect(entry).toContainText('聊天草案');
+  await expect(page.locator('.chat-message').getByText('草案已保存，尚待启用，请点击草案入口查看并确认。', { exact: true })).toBeVisible();
+  const assertEntryAfterReply = async () => {
+    const reply = page.locator('.chat-message').filter({ hasText: '草案已保存，尚待启用，请点击草案入口查看并确认。' });
+    await expect(reply).toBeVisible();
+    expect(await reply.evaluate(element => Boolean(element.compareDocumentPosition(document.querySelector('.automation-reference')!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  };
+  await assertEntryAfterReply();
+  await entry.getByRole('button', { name: '查看详情' }).click();
+  const dialog = page.getByRole('dialog', { name: '长期任务详情', exact: true });
+  await expect(dialog.locator('.automation-card')).toHaveCount(1);
+  await expect(dialog.getByText('核实来源并整理摘要', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '创建并启用' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: '修改', exact: true }).click();
+  await dialog.getByLabel('委托内容').fill('核实来源，列出三条要点');
+  await expect(dialog.getByRole('button', { name: '确认启用' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(dialog.getByText('核实来源，列出三条要点', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: '确认启用' }).click();
+  await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '确认启用' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.reload();
+  await assertEntryAfterReply();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await entry.getByRole('button', { name: '查看详情' }).click();
+  await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('核实来源，列出三条要点', { exact: true })).toBeVisible();
+  expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  page.once('dialog', prompt => prompt.accept());
+  await dialog.getByRole('button', { name: '取消委托' }).click();
+  await expect(dialog.getByRole('button', { name: '修改', exact: true })).toHaveCount(0);
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.goto('/chat/failed-draft-entry');
+  await page.getByLabel('消息', { exact: true }).fill('失败草案');
+  await page.getByLabel('消息', { exact: true }).press('Enter');
+  await expect(page.locator('.chat-message').getByText('草案未保存。', { exact: true })).toBeVisible();
+  await expect(page.locator('.automation-reference')).toHaveCount(0);
+});
+
+test('task list stays compact and navigates to details and back on desktop and mobile', async ({ page }) => {
+  await page.addInitScript(url => { localStorage.setItem('omnistream.url', url); localStorage.setItem('omnistream.locale', 'zh-CN'); }, endpoint);
+  const created = await fetch(endpoint + '/automations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: '产品更新摘要', goal: '收集产品更新与用户反馈，核实来源，整理重点变化及待跟进事项。'.repeat(8), conversation: 'list-inbox', schedule: { kind: 'interval', seconds: 3600 }, calendar: { weekdays: [1, 2, 3, 4, 5], include_dates: [], exclude_dates: [] } }) }).then(r => r.json());
+  await page.goto('/chat/list-inbox');
+  await page.getByRole('button', { name: '长期任务', exact: true }).click();
+  const dialog = page.locator('dialog.automation-dialog');
+  await expect(dialog.getByLabel('委托内容')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: '立即执行一次' })).toHaveCount(0);
+  const row = dialog.locator('.automation-list-card').filter({ hasText: '产品更新摘要' });
+  await expect(row).toContainText('每 1 小时');
+  await page.screenshot({ path: 'test-results/automation-list-desktop.png' });
+  await row.getByRole('button', { name: '查看 产品更新摘要 的详情' }).click();
+  await expect(dialog.locator('.automation-card')).toHaveCount(1);
+  await dialog.getByRole('button', { name: '暂停', exact: true }).click();
+  await expect(dialog.getByText('已暂停', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: '返回任务列表' }).click();
+  await dialog.getByRole('group', { name: '按任务状态筛选' }).getByRole('button', { name: /^已暂停/ }).click();
+  await expect(row).toContainText('恢复后重新安排');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/automation-list-mobile.png' });
+  await row.getByRole('button', { name: '查看 产品更新摘要 的详情' }).click();
+  await dialog.getByRole('button', { name: '恢复', exact: true }).click();
+  await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
+  await fetch(endpoint + '/automations/' + created.id + '/cancel', { method: 'POST' });
 });

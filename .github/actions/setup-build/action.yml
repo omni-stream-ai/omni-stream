@@ -1,0 +1,34 @@
+name: Set up OmniStream builds
+description: Install the pinned frontend tooling and optional Rust toolchain
+inputs:
+  rust:
+    description: Install Rust and restore Cargo caches
+    default: 'false'
+  targets:
+    description: Comma-separated Rust target triples
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+    - uses: pnpm/action-setup@v6
+      with:
+        version: 12.9.0
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+    - if: inputs.rust == 'true'
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ inputs.targets }}
+    - if: inputs.rust == 'true'
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: release-${{ runner.os }}-${{ inputs.targets }}
+        workspaces: |
+          . -> target
+          apps/gui/src-tauri -> target
+    - shell: bash
+      run: pnpm install --frozen-lockfile

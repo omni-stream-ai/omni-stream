@@ -1,17 +1,18 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, automationApi, type Automation, type AutomationDraft, type AutomationSchedule, type AutomationTarget, type AutomationOptions as Options } from '../lib/api';
+import { api, automationApi, type Automation, type AutomationDraft, type AutomationTarget, type AutomationOptions as Options } from '../lib/api';
 import { useI18n } from '../i18n';
 import { EmptyState, ErrorState, LoadingState, MutationError } from './StateView';
 import { MessageContent } from './MessageContent';
 import { AutomationOptions } from './AutomationOptions';
 import { AutomationConfirmationCard } from './AutomationConfirmationCard';
 import { ApprovalForm } from './ApprovalForm';
+import { scheduleLabel } from './automationDisplay';
 
-export function AutomationPanel({ server, conversation, onOpenConversation }: { server: string; conversation: string; onOpenConversation: (id: string) => void }) {
+export function AutomationPanel({ server, conversation, onOpenConversation, selectedId, onCreated }: { onCreated?: (id: number) => void; selectedId?: number; server: string; conversation: string; onOpenConversation: (id: string) => void }) {
   const { t, locale } = useI18n();
   const client = useQueryClient();
-  const items = useQuery({ queryKey: ['automations', server], queryFn: automationApi.list, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false, refetchInterval: query => query.state.status === 'error' ? false : 2000 });
+  const items = useQuery({ queryKey: ['automations', server], queryFn: automationApi.list, enabled: selectedId !== undefined, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false, refetchInterval: query => query.state.status === 'error' ? false : 2000 });
   const approvals = useQuery({ queryKey: ['automation-approvals', server], queryFn: api.approvals, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false, refetchInterval: query => query.state.status === 'error' ? false : 2000 });
   const agents = useQuery({ queryKey: ['agents', server], queryFn: api.agents, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false });
   const [agentId, setAgentId] = useState<number | null>(null);
@@ -28,12 +29,9 @@ export function AutomationPanel({ server, conversation, onOpenConversation }: { 
   const [formError, setFormError] = useState('');
   const refresh = () => { void approvals.refetch(); void client.invalidateQueries({ queryKey: ['automations', server] }); void client.invalidateQueries({ queryKey: ['conversations', server] }); };
   const reset = () => { setEditing(null); setAgentId(null); setOptions({}); setTitle(''); setGoal(''); setProject(''); setDestination(conversation); setFormError(''); };
-  const save = useMutation({ mutationFn: (draft: AutomationDraft) => editing === null ? automationApi.create(draft) : automationApi.update(editing, draft), onSuccess: () => { reset(); refresh(); } });
+  const save = useMutation({ mutationFn: (draft: AutomationDraft) => editing === null ? automationApi.create(draft) : automationApi.update(editing, draft), onSuccess: item => { const created = editing === null; reset(); refresh(); if (created) onCreated?.(item.id); } });
   const action = useMutation({ mutationFn: ({ id, command }: { id: number; command: 'activate' | 'pause' | 'resume' | 'cancel' | 'run' | 'revoke' }) => automationApi.action(id, command), onSuccess: refresh });
   const date = (value: number | null) => value === null ? '—' : new Date(value * 1000).toLocaleString(locale);
-  const scheduleLabel = (schedule: AutomationSchedule) => schedule.kind === 'interval'
-    ? t('automation.everyMinutes', { count: schedule.seconds / 60 })
-    : t('automation.daily') + ' ' + [schedule.hour, schedule.minute, schedule.second ?? 0].map(n => String(n).padStart(2, '0')).join(':') + ' UTC' + (schedule.utc_offset_minutes >= 0 ? '+' : '-') + String(Math.floor(Math.abs(schedule.utc_offset_minutes) / 60)).padStart(2, '0') + ':' + String(Math.abs(schedule.utc_offset_minutes) % 60).padStart(2, '0');
   const targetLabel = (target?: AutomationTarget) => !target ? '' : target.type === 'in_app' ? t('automation.inApp') : [target.plugin, target.action, ...Object.entries(target.destination).map(([key, value]) => key + ': ' + value)].join(' · ');
   const edit = (item: Automation) => {
     setAgentId(item.agent_id ?? null);
@@ -50,9 +48,9 @@ export function AutomationPanel({ server, conversation, onOpenConversation }: { 
     save.mutate({ ...options, agent_id: agentId, title: title.trim() || goal.trim().slice(0, 40), goal: goal.trim(), project: project.trim() || null, conversation: destination.trim() || null,
       schedule: kind === 'daily' ? { kind, hour, minute, ...(second ? { second } : {}), utc_offset_minutes: offset } : { kind, seconds: Math.round(minutes * 60) } });
   };
+  const visibleItems = (items.data ?? []).filter(item => selectedId === undefined || item.id === selectedId);
   return <div className="automation-panel">
-    <p className="muted">{t('automation.description')}</p>
-    <form className="dialog-form" onSubmit={submit}>
+    {(selectedId === undefined || editing !== null) && <form className="dialog-form" onSubmit={submit}>
       <h3>{t(editing === null ? 'automation.create' : 'automation.edit')}</h3>
       <label>{t('automation.titleLabel')}<input value={title} onChange={event => setTitle(event.target.value)} placeholder={t('automation.titleExample')} /></label>
       <label>{t('automation.goal')}<textarea required value={goal} onChange={event => setGoal(event.target.value)} rows={3} placeholder={t('automation.example')} /></label>
@@ -68,16 +66,22 @@ export function AutomationPanel({ server, conversation, onOpenConversation }: { 
       <AutomationOptions server={server} value={options} onChange={setOptions} />
       {formError || save.error ? <ErrorState compact title={t('common.operationFailed')} description={formError || save.error?.message || ''} onRetry={() => formError ? setFormError('') : save.variables && save.mutate(save.variables)} retryLabel={formError ? t('common.edit') : t('common.retry')} retrying={save.isPending} /> : null}
       <div className="dialog-actions">{editing !== null && <button type="button" className="ghost" onClick={reset}>{t('common.cancel')}</button>}<button className="primary" disabled={save.isPending || !goal.trim()}>{save.isPending ? t('common.saving') : t(editing === null ? 'automation.createAndEnable' : 'common.save')}</button></div>
-    </form>
+    </form>}
     {action.error && <MutationError mutation={action} />}
-    {items.isPending ? <LoadingState /> : items.isError ? <ErrorState title={t('automation.loadFailed')} description={items.error.message} onRetry={() => void items.refetch()} retrying={items.isFetching} /> : !items.data.length ? <EmptyState compact title={t('automation.empty')} description={t('automation.example')} /> : items.data.map(item => {
+    {selectedId !== undefined && (items.isPending ? <LoadingState /> : items.isError ? <ErrorState title={t('automation.loadFailed')} description={items.error.message} onRetry={() => void items.refetch()} retrying={items.isFetching} /> : !visibleItems.length ? <EmptyState compact title={t(selectedId === undefined ? 'automation.empty' : 'automation.missing')} description={t(selectedId === undefined ? 'automation.example' : 'automation.missingHint')} /> : visibleItems.filter(item => selectedId === undefined || editing !== item.id).map(item => {
       const running = item.runs.some(run => run.status === 'running');
       const queued = item.manual_run_at != null;
       const invoke = (command: 'activate' | 'pause' | 'resume' | 'cancel' | 'run' | 'revoke') => action.mutate({ id: item.id, command });
       return <article className="automation-card" key={item.id}>
         <div className="section-heading"><h3>{item.title}</h3><span className={`status ${item.status}`}>{t(`automation.${item.status}`)}</span></div>
-        <p>{item.goal}</p><p className="muted">{scheduleLabel(item.schedule)} · {t('automation.next')}: {date(item.next_run_at)}</p>
+        <MessageContent content={item.goal} /><p className="muted">{scheduleLabel(item, t)} · {t('automation.next')}: {date(item.next_run_at)}</p>
         {item.calendar && <p className="muted">{t('automation.weekdays')}: {item.calendar.weekdays?.join(', ') || t('automation.daily')} · {t('automation.include_dates')}: {item.calendar.include_dates?.map(d => d.date).join(', ') || '—'} · {t('automation.exclude_dates')}: {item.calendar.exclude_dates?.map(d => d.date).join(', ') || '—'}</p>}
+        {item.project && <p>{t('automation.workspace')}: {item.project}</p>}
+        {item.agent_id != null && <p>{t('agents.forAutomation')}: {agents.data?.find(agent => agent.id === item.agent_id)?.name ?? '#' + item.agent_id}</p>}
+        {item.allow_calendar_updates && <p>{t('automation.allowCalendar')}</p>}
+        {item.silent_unmet && <p>{t('automation.silent')}</p>}
+        {!!item.delivery_targets?.length && <p>{t('automation.failurePolicy')}: {t(item.delivery_policy === 'fail_fast' ? 'automation.failFast' : item.delivery_policy === 'fallback_in_app' ? 'automation.fallback' : 'automation.independent')}</p>}
+        {!![...(item.calendar?.include_dates ?? []), ...(item.calendar?.exclude_dates ?? [])].length && <details><summary>{t('automation.calendarSources')}</summary>{[...(item.calendar?.include_dates ?? []), ...(item.calendar?.exclude_dates ?? [])].map((entry, index) => <p key={index}>{entry.date} · {entry.reason} · {entry.source}</p>)}</details>}
         {item.time_window && <p>{t('automation.window')}: {item.time_window.kind === 'lookback' ? t('automation.lookback') + ' · ' + item.time_window.seconds + ' s' : t('automation.previousDay') + ' · ' + [item.time_window.hour, item.time_window.minute, item.time_window.second ?? 0].map(n => String(n).padStart(2, '0')).join(':')}</p>}
         {!!item.delivery_targets?.length && <details open><summary>{t('automation.targets')}</summary>{item.delivery_targets.map(target => <p key={target.id}>{target.type === 'in_app' ? t('automation.inApp') : target.plugin + ' · ' + target.action + ' · ' + JSON.stringify(target.destination) + ' · ' + Object.entries(target.payload).map(([key, content]) => key + ': ' + content).join(' · ')} · {item.delivery_grants?.find(g => g.target_id === target.id)?.account.account ?? '—'}</p>)}</details>}
         {item.confirmation && <p className="muted">{t('confirmation.settings')} · {item.confirmation.before_seconds} s · {t(item.confirmation.on_timeout === 'wait' ? 'confirmation.timeoutWait' : item.confirmation.on_timeout === 'run' ? 'confirmation.timeoutRun' : 'confirmation.timeoutSkip')}</p>}
@@ -97,6 +101,6 @@ export function AutomationPanel({ server, conversation, onOpenConversation }: { 
         {!!item.calendar_audit?.length && <details><summary>{t('automation.audit')}</summary>{item.calendar_audit.map((entry, i) => <p key={i}>{date(entry.at)} · {entry.actor} · {entry.reason}</p>)}</details>}
         <details><summary>{t('automation.history')} ({item.runs.length})</summary>{!item.runs.length && <EmptyState compact title={t('automation.noRuns')} description={t('automation.history')} />}{[...item.runs].reverse().map(run => <section className="automation-run" key={run.id}><strong>#{run.id} · {t(`automation.${run.status}`)} · {date(run.started_at)}</strong>{run.context?.time_window?.start !== undefined && <p>{t('automation.window')}: {date(run.context.time_window.start)} — {date(run.context.time_window.end ?? null)}</p>}{run.skip_reason && <p>{t('automation.skipped')}: {run.skip_reason}</p>}{run.deliveries?.map(receipt => <p key={receipt.target_id}>{receipt.target_id} · {targetLabel(run.context?.delivery_targets?.find(target => target.id === receipt.target_id))} · {t('automation.' + receipt.status)} · {receipt.attempts} {receipt.error && '· ' + receipt.error}</p>)}{run.generation_output && run.generation_output !== run.output && <details><summary>{t('automation.generated')}</summary><MessageContent content={run.generation_output} /></details>}<MessageContent content={run.output || t('automation.running')} /></section>)}</details>
       </article>;
-    })}
+    }))}
   </div>;
 }

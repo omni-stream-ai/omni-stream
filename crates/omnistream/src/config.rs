@@ -24,6 +24,8 @@ pub struct Config {
     pub auto_approve: Vec<String>,
     pub approval_mode: Option<ApprovalMode>,
     pub max_concurrency: Option<usize>,
+    pub push: Option<crate::push::Settings>,
+    pub access: Option<crate::client_auth::Settings>,
     #[serde(skip)]
     pub message_attachments: Vec<serde_json::Value>,
     #[serde(skip)]
@@ -74,6 +76,8 @@ pub struct AgentConfig {
     pub mcp_args: Vec<String>,
     #[serde(skip)]
     pub plugin_tools: crate::agent_plugins::Snapshot,
+    #[serde(skip)]
+    pub inherited_model: Option<Arc<crate::delegated_model::SelectedModel>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -152,6 +156,16 @@ impl Config {
                 config.model_reasoning_efforts = overlay.model_reasoning_efforts;
             }
             config.model_providers.extend(overlay.model_providers);
+            if overlay.push.is_some() {
+                config.push = overlay.push;
+            }
+            if let Some(access) = overlay.access {
+                let required =
+                    config.access.as_ref().is_some_and(|s| s.require_auth) || access.require_auth;
+                config.access = Some(crate::client_auth::Settings {
+                    require_auth: required,
+                });
+            }
             config.agents.extend(overlay.agents);
             if overlay.approval_mode.is_some() {
                 config.approval_mode = overlay.approval_mode;

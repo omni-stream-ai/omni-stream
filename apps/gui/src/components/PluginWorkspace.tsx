@@ -1,3 +1,4 @@
+import { randomId } from '../lib/uuid';
 import { PluginResults } from './PluginResults';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
@@ -52,7 +53,7 @@ export function PluginWorkspace({ plugin, onBack, onChange, onRefresh, initialOp
       // Explicitly construct a credential-free payload; never spread form state.
       const options: PluginSetupOptions = { auth_mode: id === 'slack' ? authMode : 'token', listen: id === 'slack' && authMode === 'slack_user' && listen, listen_scope: listenScope, enabled, allow_writes: allowWrites, locale };
       const key = JSON.stringify(options);
-      if (setupRequest.current?.key !== key) setupRequest.current = { key, id: crypto.randomUUID() };
+      if (setupRequest.current?.key !== key) setupRequest.current = { key, id: randomId() };
       return pluginApi.setup(id, options, setupRequest.current.id);
     },
     retry: false,

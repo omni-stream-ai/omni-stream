@@ -1,0 +1,317 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths:
+      - Cargo.toml
+      - apps/gui/package.json
+      - apps/gui/src-tauri/Cargo.toml
+      - apps/gui/src-tauri/tauri.conf.json
+      - .github/workflows/release.yml
+      - .github/actions/setup-build/**
+      - .github/scripts/**
+      - .github/tests/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  ENABLE_IOS_RELEASE: ${{ vars.ENABLE_IOS_RELEASE }}
+
+jobs:
+  metadata:
+    name: Validate and detect version
+    runs-on: ubuntu-24.04
+    if: github.event.deleted != true
+    timeout-minutes: 10
+    outputs:
+      should_build: ${{ steps.plan.outputs.should_build }}
+      should_release: ${{ steps.plan.outputs.should_release }}
+      ios_enabled: ${{ steps.plan.outputs.ios_enabled }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Test release helpers
+        run: python -m unittest discover -s .github/tests -v
+      - name: Detect build and publication
+        id: plan
+        run: python .github/scripts/release.py detect
+
+  web:
+    name: Web archive
+    needs: metadata
+    if: needs.metadata.outputs.should_build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-build
+      - name: Check and build GUI
+        run: |
+          pnpm --filter @omnistream/gui typecheck
+          pnpm --filter @omnistream/gui test:unit
+          pnpm gui:build
+      - name: Package Web
+        run: python .github/scripts/artifacts.py web
+      - uses: actions/upload-artifact@v7
+        with:
+          name: omnistream-web
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  desktop:
+    name: Desktop (${{ matrix.platform }})
+    needs: metadata
+    if: needs.metadata.outputs.should_build == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+          - platform: windows-x86_64
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - platform: macos-arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - platform: macos-x86_64
+            os: macos-15
+            target: x86_64-apple-darwin
+            bundles: dmg
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Linux bundling dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config perl curl wget file libxdo-dev libssl-dev libdbus-1-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2
+      - name: Select Xcode
+        if: runner.os == 'macOS'
+        run: |
+          test -d /Applications/Xcode_16.4.app/Contents/Developer
+          echo 'DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer' >> "$GITHUB_ENV"
+      - name: Enable MSVC and Windows SDK
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install Windows OpenSSL assembler
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+        with:
+          version: 2.16.03
+      - name: Select native Windows Perl for OpenSSL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $perl = 'C:\Strawberry\perl\bin\perl.exe'
+          if (!(Test-Path $perl)) { throw 'The Windows runner is missing Strawberry Perl' }
+          "OPENSSL_SRC_PERL=$perl" >> $env:GITHUB_ENV
+      - uses: ./.github/actions/setup-build
+        with:
+          rust: 'true'
+          targets: ${{ matrix.target }}
+      - name: Verify Linux build environment
+        if: runner.os == 'Linux'
+        run: python .github/scripts/check_environment.py linux
+      - name: Verify Windows build environment
+        if: runner.os == 'Windows'
+        run: python .github/scripts/check_environment.py windows
+      - name: Verify macOS build environment and target SDK
+        if: runner.os == 'macOS'
+        run: python .github/scripts/check_environment.py macos --target '${{ matrix.target }}'
+      - name: Test Core
+        if: runner.os == 'Linux'
+        env:
+          CARGO_PROFILE_TEST_DEBUG: '0'
+        run: cargo test --workspace --locked --features omnistream/vendored-openssl
+      - name: Build Core and prepare sidecar
+        env:
+          OMNISTREAM_FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.OMNISTREAM_FCM_SERVICE_ACCOUNT_JSON }}
+          OMNISTREAM_REQUIRE_BUNDLED_FCM: ${{ needs.metadata.outputs.should_release }}
+        run: |
+          cargo build --release --locked -p omnistream --bin omnistream --features vendored-openssl --target '${{ matrix.target }}'
+          python .github/scripts/artifacts.py sidecar '${{ matrix.target }}'
+      - name: Build desktop installer
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+          NO_STRIP: 'true'
+        run: pnpm --filter @omnistream/gui tauri build --ci --target '${{ matrix.target }}' --bundles '${{ matrix.bundles }}' -- --locked
+      - name: Package installers and standalone Core
+        run: python .github/scripts/artifacts.py desktop '${{ matrix.platform }}'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: omnistream-desktop-${{ matrix.platform }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  android:
+    name: Android APK and AAB
+    needs: metadata
+    if: needs.metadata.outputs.should_build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      ANDROID_API_LEVEL: '36'
+      ANDROID_BUILD_TOOLS_VERSION: '36.0.0'
+      ANDROID_NDK_VERSION: '28.2.13676358'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install Android SDK and NDK
+        run: |
+          sdkmanager "platforms;android-$ANDROID_API_LEVEL" "build-tools;$ANDROID_BUILD_TOOLS_VERSION" "ndk;$ANDROID_NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-build
+        with:
+          rust: 'true'
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - name: Verify Android SDK and Rust targets
+        run: python .github/scripts/check_environment.py android
+      - name: Initialize native Android project
+        run: pnpm --filter @omnistream/gui android:init --skip-targets-install
+      - name: Configure Android signing
+        env:
+          REQUIRE_ANDROID_SIGNING: ${{ needs.metadata.outputs.should_release }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: python .github/scripts/signing.py android
+      - name: Build universal APK and AAB
+        run: pnpm --filter @omnistream/gui android:build --ci --apk --aab --target aarch64 armv7 x86_64
+      - name: Build ABI-specific APKs
+        run: pnpm --filter @omnistream/gui android:build --ci --apk --split-per-abi --target aarch64 armv7 x86_64
+      - name: Verify mobile signatures
+        if: env.ANDROID_SIGNED == 'true'
+        run: python .github/scripts/signing.py verify-android
+      - name: Package Android
+        run: python .github/scripts/artifacts.py android
+      - uses: actions/upload-artifact@v7
+        with:
+          name: omnistream-android
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove Android signing files
+        if: always()
+        run: python .github/scripts/signing.py cleanup-android
+
+  ios:
+    name: iOS signed IPA (optional)
+    needs: metadata
+    if: needs.metadata.outputs.should_build == 'true' && needs.metadata.outputs.ios_enabled == 'true'
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-build
+        with:
+          rust: 'true'
+          targets: aarch64-apple-ios
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler: none
+      - name: Install Xcode project tools with the same Ruby
+        run: |
+          brew install xcodegen
+          gem install cocoapods xcodeproj --no-document
+      - name: Verify iOS SDK and Ruby project tools
+        run: python .github/scripts/check_environment.py ios
+      - name: Configure Apple signing
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: python .github/scripts/signing.py ios
+      - name: Initialize and configure native iOS project
+        run: |
+          pnpm --filter @omnistream/gui ios:init --skip-targets-install
+          python .github/scripts/signing.py ios-project
+      - name: Build signed IPA
+        run: pnpm --filter @omnistream/gui ios:build --ci --target aarch64 --export-method release-testing --build-number "$GITHUB_RUN_NUMBER"
+      - name: Package iOS
+        run: python .github/scripts/artifacts.py ios
+      - uses: actions/upload-artifact@v7
+        with:
+          name: omnistream-ios
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove Apple signing files and keychain
+        if: always()
+        run: python .github/scripts/signing.py cleanup-ios
+
+  publish:
+    name: Publish GitHub Release
+    needs: [metadata, web, desktop, android, ios]
+    if: >-
+      always() && !cancelled() &&
+      needs.metadata.outputs.should_release == 'true' &&
+      needs.web.result == 'success' && needs.desktop.result == 'success' &&
+      needs.android.result == 'success' &&
+      (needs.ios.result == 'success' || needs.ios.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: omnistream-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify packages, create tag, and publish release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git --version
+          gh --version
+          python .github/scripts/release.py publish

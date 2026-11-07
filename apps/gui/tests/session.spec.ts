@@ -278,7 +278,7 @@ test('approval stays with its source conversation and settings are scoped', asyn
 test('MCP structured form submits typed values', async ({ page }) => {
   await page.getByLabel('消息', { exact: true }).fill('表单验证，委派验证');
   await page.getByLabel('消息', { exact: true }).press('Enter');
-  await expect(page.getByText('补充执行参数', { exact: true })).toBeVisible();
+  await expect(page.locator('.pending-request').getByText(/^补充执行参数/)).toBeVisible();
   await page.getByLabel('名称', { exact: true }).fill('示例');
   await page.getByLabel('数量', { exact: true }).fill('2');
   await page.getByLabel('启用', { exact: true }).check();

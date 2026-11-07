@@ -20,7 +20,7 @@ use std::{
 
 pub fn scope(owner: &str, project: &str, agent: &AgentConfig) -> String {
     use sha2::{Digest, Sha256};
-    let identity = json!([
+    let mut identity = json!([
         owner,
         project,
         agent.command,
@@ -30,9 +30,14 @@ pub fn scope(owner: &str, project: &str, agent: &AgentConfig) -> String {
         agent.plugin_transport,
         agent.mcp_args,
         agent.plugin_tools
-    ])
-    .to_string();
-    format!("{:x}", Sha256::digest(identity.as_bytes()))
+    ]);
+    if let Some(model) = &agent.inherited_model {
+        identity
+            .as_array_mut()
+            .unwrap()
+            .push(json!(model.identity()));
+    }
+    format!("{:x}", Sha256::digest(identity.to_string().as_bytes()))
 }
 
 /// An OS lock coordinates separate Core processes and is released on process exit.
@@ -114,18 +119,26 @@ impl Host for CoreHost {
         }
     }
     fn begin_request(&mut self, request: ApprovalRequest) -> Result<RequestResponse, String> {
-        if self.approval_mode == ApprovalMode::All
+        if self.cancel.load(Ordering::Relaxed) {
+            return Err("审批等待已取消".into());
+        }
+        let read_only_web = crate::policy::read_only_web(&request);
+        if (read_only_web || self.approval_mode == ApprovalMode::All)
             && !matches!(
                 request.method.as_str(),
                 "item/tool/requestUserInput" | "mcpServer/elicitation/request"
             )
         {
             let response = crate::server_requests::decision(&request, ApprovalDecision::Accept)?;
-            self.store.agent_event(
-                self.task_id,
-                &json!({"scope":self.scope,"approval":"auto-approved","method":request.method}),
-            )?;
-            return Ok(RequestResponse::Ready(response));
+            if self.approval_mode == ApprovalMode::All
+                || crate::server_requests::validate(&request, &response).is_ok()
+            {
+                self.store.agent_event(
+                    self.task_id,
+                    &json!({"scope":self.scope,"approval":"auto-approved","method":request.method,"reason":if read_only_web { "read-only-web" } else { "approval-mode-all" }}),
+                )?;
+                return Ok(RequestResponse::Ready(response));
+            }
         }
         let mut public_request = serde_json::to_value(&request).map_err(|e| e.to_string())?;
         if self.plugin_setup {
@@ -259,6 +272,7 @@ pub fn run(
     } else {
         task.goal.clone()
     };
+    prompt.push_str(crate::policy::READ_ONLY_WEB_HINT);
     if let Some(gateway) = &gateway {
         prompt.push_str(&gateway.hint());
     }
@@ -423,6 +437,97 @@ mod tests {
         assert_eq!(store.approval(id).unwrap().unwrap().status, "expired");
         assert!(!store.events(7).unwrap().is_empty());
     }
+    #[test]
+    fn read_only_web_requests_bypass_the_user_queue_in_default_and_safe_modes() {
+        for mode in [ApprovalMode::Default, ApprovalMode::Safe] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut host = CoreHost {
+                store: Store::open(&dir.path().join("db")).unwrap(),
+                scope: "web".into(),
+                task_id: 0,
+                cancel: Arc::new(AtomicBool::new(false)),
+                approval_mode: mode,
+                agent_name: "test".into(),
+                plugin_setup: false,
+            };
+            let response = host.begin_request(ApprovalRequest {
+                id: json!("read"),
+                method: "item/commandExecution/requestApproval".into(),
+                params: json!({"command":"curl -q -fsSL --proto-redir '=http,https' https://example.com","availableDecisions":["accept","decline","cancel"]}),
+            }).unwrap();
+            assert!(
+                matches!(response, RequestResponse::Ready(value) if value == json!({"decision":"accept"}))
+            );
+            assert!(host.store.approvals(None).unwrap().is_empty());
+            let events = host.store.scope_events("web").unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0]["approval"], "auto-approved");
+            assert_eq!(events[0]["reason"], "read-only-web");
+        }
+    }
+
+    #[test]
+    fn writes_network_grants_and_unavailable_read_decisions_still_wait_for_a_user() {
+        for (method, params) in [
+            (
+                "item/commandExecution/requestApproval",
+                json!({"command":"curl -q -X POST https://example.com"}),
+            ),
+            (
+                "item/commandExecution/requestApproval",
+                json!({"command":"curl -q -o file.html https://example.com"}),
+            ),
+            (
+                "item/permissions/requestApproval",
+                json!({"permissions":{"network":{"enabled":true}}}),
+            ),
+            (
+                "item/commandExecution/requestApproval",
+                json!({"command":"curl -q https://example.com","additionalPermissions":{"fileSystem":{"write":["/tmp"]}}}),
+            ),
+            (
+                "item/commandExecution/requestApproval",
+                json!({"command":"curl -q https://example.com","availableDecisions":["decline","cancel"]}),
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let db = dir.path().join("db");
+            let cancel = Arc::new(AtomicBool::new(false));
+            let mut host = CoreHost {
+                store: Store::open(&db).unwrap(),
+                scope: "web".into(),
+                task_id: 0,
+                cancel: cancel.clone(),
+                approval_mode: ApprovalMode::Safe,
+                agent_name: "test".into(),
+                plugin_setup: false,
+            };
+            let request = ApprovalRequest {
+                id: json!("write"),
+                method: method.into(),
+                params,
+            };
+            let worker = std::thread::spawn(move || host.begin_request(request));
+            let store = Store::open(&db).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let id = loop {
+                if let Some(item) = store.approvals(Some("pending")).unwrap().first() {
+                    break item.id;
+                }
+                if Instant::now() >= deadline {
+                    cancel.store(true, Ordering::Relaxed);
+                    let _ = worker.join();
+                    panic!("expected pending approval for {method}");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            assert!(store.resolve_approval(id, "rejected").unwrap());
+            let response = worker.join().unwrap().unwrap();
+            assert!(matches!(response, RequestResponse::Ready(_)));
+            assert_eq!(store.approval(id).unwrap().unwrap().status, "expired");
+        }
+    }
+
     #[test]
     fn cancelled_approval_cannot_be_reused() {
         let dir = tempfile::tempdir().unwrap();

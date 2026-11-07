@@ -5,8 +5,10 @@
   <p>
     <img src="https://img.shields.io/badge/core-Rust-orange?logo=rust" alt="Rust Core" />
     <img src="https://img.shields.io/badge/UI-React%20%2B%20TypeScript-149eca?logo=react" alt="React and TypeScript" />
-    <img src="https://img.shields.io/badge/desktop-Tauri%202-24c8d8?logo=tauri" alt="Tauri 2" />
-    <img src="https://img.shields.io/badge/platforms-Web%20%7C%20Desktop-347d39" alt="Web and desktop" />
+    <img src="https://img.shields.io/badge/native-Tauri%202-24c8d8?logo=tauri" alt="Tauri 2" />
+    <img src="https://img.shields.io/badge/platforms-Web%20%7C%20Desktop%20%7C%20Android%20%7C%20iOS-347d39" alt="Web, desktop, Android and iOS" />
+    <a href="https://github.com/omni-stream-ai/omni-stream/actions/workflows/release.yml"><img src="https://github.com/omni-stream-ai/omni-stream/actions/workflows/release.yml/badge.svg" alt="Release builds" /></a>
+    <a href="https://github.com/omni-stream-ai/omni-stream/releases"><img src="https://img.shields.io/github/v/release/omni-stream-ai/omni-stream?include_prereleases" alt="GitHub Release" /></a>
   </p>
   <p><a href="docs/zh/README.md">中文文档</a> · <a href="docs/README.md">Documentation</a> · <a href="https://omnistreamai.com/">Website</a></p>
 </div>
@@ -21,9 +23,16 @@ OmniStream brings chat, specialized Agents, connected apps, and scheduled work i
 - **Specialized assistants** — create named Agents with role instructions, call them with @mentions, and assign them to recurring tasks.
 - **Recurring delegations** — daily or interval schedules, calendar rules, execution history, optional approval before each run, and authorized plugin deliveries.
 - **Connected apps** — Slack, GitHub, Notion, Figma, and Chrome DevTools MCP, with explicit account setup and write permissions.
-- **Web and desktop** — a React web app with PWA support and a Tauri desktop shell that starts a local Rust Core.
+- **Web, desktop, and mobile** — a React web app with PWA support and Tauri native apps for desktop, Android, and iOS. Desktop starts a local Rust Core; mobile connects to a remote Core.
+- **System notifications** — task results, pending responses, and Slack inbox alerts; Android and browsers automatically register with the connected Core for [remote push](docs/zh/push.md) while the app or page is closed.
 
-Web builds and desktop packaging are configured. Android and iOS have an entry point for remote Core access, but native projects and a complete packaging workflow are not yet provided.
+Native mobile projects are generated locally by the platform scripts below, with development and package build commands. See the [mobile guide](docs/zh/mobile.md) (Chinese) for setup, signing, and validation limits.
+
+## Downloads and releases
+
+[GitHub Releases](https://github.com/omni-stream-ai/omni-stream/releases) is the download destination for Web archives, Windows/Linux/macOS installers, standalone Core binaries, and signed Android APK/AAB packages. iOS IPA packaging is optional and requires Apple signing; Ad Hoc installs are limited to registered devices. Each release includes categorized commit notes, `manifest.json`, and `SHA256SUMS`.
+
+The [Release workflow](.github/workflows/release.yml) builds on version changes, publishes stable versions from the default branch and prereleases from other branches, and supports manual builds without publishing. Configure Android signing secrets before the first automatic release. See [packaging and releases](docs/zh/releases.md) (Chinese) for the artifact matrix, version files, signing setup, and retry rules. Windows packages are unsigned; macOS packages use ad-hoc signing without notarization.
 
 ## Quick start
 
@@ -50,7 +59,7 @@ Without `make`, run `cargo run -p omnistream -- serve 127.0.0.1:4317`. For the i
 
 Model chat and external Agent execution require configuration. Core reads `~/.omnistream/config.toml` by default; `OMNISTREAM_HOME` changes the global directory, and `.omnistream/config.toml` in a project overrides global settings.
 
-Configure your management model provider separately from external Agent credentials. For Codex collaboration with conversation recovery and interactive approvals:
+Configure a management model provider and an execution engine. For Codex collaboration with conversation recovery and interactive approvals:
 
 ```toml
 [agents.codex]
@@ -59,7 +68,7 @@ protocol = "app-server"
 args = ["app-server"]
 ```
 
-Codex uses its own model and login configuration. See the [configuration guide](docs/zh/configuration.md) and [adapter reference](docs/zh/adapters.md) (Chinese) for provider examples and protocol limits.
+Codex App Server conversation delegations inherit the request's selected model and authentication configuration. See [model inheritance](docs/zh/configuration.md#委派模型继承) and the [adapter reference](docs/zh/adapters.md) (Chinese) for supported providers and execution modes.
 
 Recurring work created in chat starts as a draft: activate it in the recurring tasks panel. Core must remain running for scheduled work to execute.
 
@@ -85,7 +94,26 @@ pnpm --filter @omnistream/gui tauri build
 
 The desktop app starts its bundled Core. Connection settings offer opt-in LAN access and launch at login, both disabled by default. LAN changes take effect after restarting the app. Normal app exit stops the Core it started. See [desktop behavior and platform validation limits](docs/zh/configuration.md#桌面设置).
 
-**Network access:** Core currently has no unified access authentication. Enable LAN access only on trusted networks and protect any remotely reachable Core endpoint; protecting the frontend alone does not protect Core.
+For development with frontend hot reload and automatic rebuilds of the Tauri Rust code, run `pnpm --filter @omnistream/gui tauri dev`. Core changes require rebuilding the sidecar. NixOS users should enter the [project development environment](docs/zh/README.md#桌面端) first.
+
+### Native Android / iOS apps
+
+Android requires Android Studio, JDK 17+, the Android SDK, and NDK. iOS requires macOS, Xcode, CocoaPods, and an Apple development team. Follow the [mobile prerequisites](docs/zh/mobile.md#构建环境), then run:
+
+```bash
+pnpm --filter @omnistream/gui android:init
+pnpm --filter @omnistream/gui android:dev
+pnpm --filter @omnistream/gui android:build --apk
+
+# Run these on macOS
+pnpm --filter @omnistream/gui ios:init
+pnpm --filter @omnistream/gui ios:dev
+pnpm --filter @omnistream/gui ios:build
+```
+
+On first launch, enter the Core address of a computer or server; `127.0.0.1` on a phone refers to the phone itself. Mobile apps do not bundle Core, a shell, or Codex. See the [mobile guide](docs/zh/mobile.md) for APK/AAB and iOS signing, simulator builds, and output locations. Compilation and device validation are tracked separately.
+
+**Network access:** Non-loopback listeners require client authorization. Approve the first device from the server terminal; existing authorized clients can approve later requests in an automatic dialog and revoke access. Use HTTPS for public endpoints and set `[access] require_auth = true` when exposing a loopback Core through a reverse proxy. See [client access](docs/zh/access.md) for the trust boundary and setup.
 
 ## Development
 

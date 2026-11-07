@@ -1,3 +1,4 @@
+import { randomId } from '../lib/uuid';
 import { useQuery } from '@tanstack/react-query';
 import { pluginApi, type AutomationOptions as Options, type AutomationTarget, type DateOverride } from '../lib/api';
 import { useI18n } from '../i18n';
@@ -60,7 +61,7 @@ export function AutomationOptions({ value, onChange, server }: { value: Options;
           <button type="button" className="ghost" onClick={() => set({ delivery_targets: targets.filter((_, i) => i !== index) })}>{t('automation.remove')}</button>
         </fieldset>;
       })}
-      <button type="button" className="ghost" disabled={targets.length >= 16} onClick={() => set({ delivery_targets: [...targets, { type: 'plugin_action', id: 'target-' + crypto.randomUUID(), plugin: '', action: '', destination: {}, payload: {} }] })}>{t('automation.addTarget')}</button>
+      <button type="button" className="ghost" disabled={targets.length >= 16} onClick={() => set({ delivery_targets: [...targets, { type: 'plugin_action', id: 'target-' + randomId(), plugin: '', action: '', destination: {}, payload: {} }] })}>{t('automation.addTarget')}</button>
     </fieldset>
     <label>{t('automation.failurePolicy')}<select aria-label={t('automation.failurePolicy')} value={value.delivery_policy ?? 'independent'} onChange={event => set({ delivery_policy: event.target.value as Options['delivery_policy'] })}><option value="independent">{t('automation.independent')}</option><option value="fail_fast">{t('automation.failFast')}</option><option value="fallback_in_app">{t('automation.fallback')}</option></select></label>
   </details>;

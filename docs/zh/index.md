@@ -14,12 +14,16 @@
 | 文档 | 内容 |
 | --- | --- |
 | [项目说明](README.md) | 项目定位、快速开始、构建与部署 |
+| [移动端原生 App](mobile.md) | Android/iOS 环境、Firebase 应用登记、远程 Core、开发、构建、签名与验证边界 |
+| [打包与发布](releases.md) | GitHub Actions、版本规则、多平台产物、签名配置、更新日志与失败重试 |
 | [配置与运行](configuration.md) | 模型配置、CLI、桌面设置与网站元信息 |
+| [客户端访问授权](access.md) | 远程 Core 访问边界、申请弹窗、其他客户端批准、终端首次授权及撤销 |
 | [长期任务](automations.md) | 通用助手定位、日历与时间窗口、定时委托、逐次确认与沟通调整、插件投递授权和可靠执行记录 |
-| [会话](sessions.md) | 外部 Agent 协作、消息展示、会话配置与用户输入 |
+| [会话](sessions.md) | 会话列表排序与分页、外部 Agent 协作、消息展示、会话配置与用户输入 |
 | [命名 Agent](agents.md) | 创建专属助手、@ 调用、自主记忆、独立上下文、插件范围与长期任务绑定 |
 | [内置 skill](builtin-skills.md) | 项目与任务管理的适用场景、功能和执行边界 |
-| [GUI 公用状态](gui.md) | 空状态、失败状态、插图与重试行为 |
+| [GUI 公用状态](gui.md) | 系统通知、空状态、失败状态、插图与重试行为 |
+| [远程推送](push.md) | Android FCM、浏览器 Web Push、Core 内置凭据、设备自动注册、后台投递与失败处理 |
 | [插件市场](plugins.md) | 服务插件与 Chrome MCP 的安装、通用 Agent 工具接入、令牌连接与配置协助、Slack 监听与收件箱、本人收发及写入审批 |
 | [适配器与 Core](adapters.md) | 适配器契约、协议支持与限制、Core 和前端边界、测试方式 |
 | [测试](testing.md) | Core、GUI、模拟服务与浏览器回归验证 |

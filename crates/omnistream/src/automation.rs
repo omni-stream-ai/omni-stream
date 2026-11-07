@@ -639,6 +639,19 @@ fn complete(
         let mut history: Vec<Value> = serde_json::from_str(&data).map_err(|e| e.to_string())?;
         history.push(json!({"role":"assistant","content":format!("### {} · 第 {} 次执行（{}）\n\n{}", item.draft.title, run.id, run.status, run.output), "automation_id":id,"run_id":run_id}));
         connection.execute("INSERT INTO conversations(project,data) VALUES (?1,?2) ON CONFLICT(project) DO UPDATE SET data=excluded.data", rusqlite::params![conversation, serde_json::to_string(&history).map_err(|e| e.to_string())?]).map_err(|e| e.to_string())?;
+        if matches!(run.status.as_str(), "succeeded" | "failed" | "interrupted") {
+            crate::notifications::insert(
+                connection,
+                &format!("automation:{id}:{run_id}"),
+                if run.status == "succeeded" {
+                    "task_completed"
+                } else {
+                    "task_failed"
+                },
+                &item.draft.title,
+                conversation,
+            )?;
+        }
         Ok(())
     })
 }
@@ -1089,6 +1102,53 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
         (dir, path)
+    }
+    #[test]
+    fn notifications_commit_once_with_automation_results_and_respect_silent_skips() {
+        let (_dir, db) = database();
+        let item = create(&db, draft(), false, 100).unwrap();
+        let store = Store::open(&db).unwrap();
+        let baseline = store
+            .notifications(
+                crate::notifications::Request {
+                    after: None,
+                    instance: None,
+                },
+                None,
+            )
+            .unwrap();
+        claim(&db, 160, 1).unwrap();
+        finish(&db, item.id, 1, Ok("private output".into()), 161).unwrap();
+        finish(&db, item.id, 1, Ok("duplicate".into()), 162).unwrap();
+        let page = store
+            .notifications(
+                crate::notifications::Request {
+                    after: baseline["cursor"].as_i64(),
+                    instance: baseline["instance"].as_str().map(str::to_string),
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(page["items"].as_array().unwrap().len(), 1);
+        assert_eq!(page["items"][0]["conversation"], "inbox");
+        assert!(!page.to_string().contains("private output"));
+        claim(&db, 220, 1).unwrap();
+        transact(&db, |state, _| {
+            state.items[0].runs.last_mut().unwrap().skip_reason = Some("unmet".into());
+            Ok(())
+        })
+        .unwrap();
+        finish(&db, item.id, 2, Ok("silent".into()), 221).unwrap();
+        let next = store
+            .notifications(
+                crate::notifications::Request {
+                    after: page["cursor"].as_i64(),
+                    instance: page["instance"].as_str().map(str::to_string),
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(next["items"], json!([]));
     }
     #[test]
     fn daily_schedule_respects_offset_and_rollover() {

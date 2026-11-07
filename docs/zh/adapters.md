@@ -37,12 +37,12 @@ protocol = "app-server"
 args = ["app-server"]
 ```
 
-`args` 为空时默认使用 `app-server`；非空时必须包含完整参数及子命令。Codex 使用自身的模型、provider 和登录配置，Core 服务的管理模型 provider 设置不影响它。
+`args` 为空时默认使用 `app-server`；非空时必须包含完整参数及子命令。会话委派按[模型继承规则](configuration.md#委派模型继承)使用当前请求的模型配置。
 
 可在该 Agent 配置表中设置 `config_file = "~/.codex/wechat.config.toml"`，复用配置文件，无需 `--profile`。当前行为如下：
 
 - **参数转换**：Core 服务解析 TOML，将每个顶层设置转换为 `-c key=value`，插入 `app-server` 后。嵌套表转为 TOML 内联表，保留嵌套带引号的键、数组和标量，不经过 shell 求值。顶层键仅允许字母、数字、下划线和连字符，以适配 Codex CLI 的键解析规则。
-- **覆盖顺序**：文件值覆盖 Codex 基础配置；顶层表整体替换，不递归合并。`args` 中位于 `app-server` 后的显式覆盖参数优先于文件值。这是 CLI 参数覆盖，不是原生 profile 层，不改变 `CODEX_HOME`、登录或历史记录。
+- **覆盖顺序**：文件值覆盖 Codex 基础配置；顶层表整体替换，不递归合并。`args` 中位于 `app-server` 后的显式覆盖参数优先于文件值。启用模型继承时，Core 最后注入本次 provider、模型和思考等级；线程启动、恢复、分支及轮次启动同时使用对应参数。这是运行时覆盖，不改写配置文件或 `CODEX_HOME`。
 - **路径与加载**：此选项仅适用于 App Server，每次运行重新读取；文件缺失或无效时在启动 Codex 前报错。文件路径相对于声明它的 Core 配置文件解析，`~/` 使用 HOME。导入文件内部的路径仍遵循 CLI 覆盖语义，`model_catalog_json` 等资源应使用绝对路径。更换配置文件路径会隔离已保存的会话。
 - **凭据**：不要在导入文件中存放明文密钥，因为转换后的值会出现在进程参数中；使用 provider 认证命令或环境变量键引用。
 
@@ -56,7 +56,7 @@ args = ["app-server"]
 
 | 请求 | 处理方式 |
 | --- | --- |
-| 命令、文件变更、额外权限 | 转为 Core 审批 |
+| 命令、文件变更、额外权限 | 转为 Core 审批；可确认的[只读网页读取](sessions.md#只读网页访问)自动批准 |
 | 工具用户输入、MCP elicitation | 等待 `approval respond <id> <JSON>`，按 App Server schema 校验响应 |
 | 动态工具调用 | Core 未注册对应工具时返回结构化工具失败 |
 | 外部令牌刷新、attestation | 返回明确的协议错误，Core 服务不管理这些上游凭据 |
@@ -78,7 +78,7 @@ agent cancel
 
 HTTP 客户端通过 `POST /agent-calls/<id>/cancel` 取消会话内的 Agent 执行，编号来自会话详情的 `calls[].task_id`；该接口不启动或重跑执行。审批使用 Core 审批接口；结构化输入对应 `POST /approvals/<id>/respond`，请求体为上述响应 JSON。
 
-- **恢复与隔离**：外部会话 ID 持久化保存，直接委派按管理会话、项目、Agent 名称及 command/protocol/args/config_file、插件接入设置与工具授权配置身份隔离；长期委托按任务及运行作用域隔离。各作用域新建各自线程，同一作用域的连续对话恢复已保存线程，不能因复用工作目录而共用其他会话的线程。临时插件网关路径不影响同配置下的恢复。完成后可用 `agent continue <内容>` 继续委派对话。
+- **恢复与隔离**：外部会话 ID 持久化保存，直接委派按管理会话、项目、Agent 名称及 command/protocol/args/config_file、插件接入设置、工具授权及[继承的模型配置](configuration.md#委派模型继承)身份隔离；长期委托按任务及运行作用域隔离。各作用域新建各自线程，同一作用域的连续对话恢复已保存线程，不能因复用工作目录而共用其他会话的线程。临时插件网关路径不影响同配置下的恢复。完成后可用 `agent continue <内容>` 继续委派对话。
 - **占用与分支**：同一作用域仅允许一个执行，使用 Core 状态目录下的系统文件锁协调本进程及其他 Core 进程，冲突明确提示等待当前执行结束；正常结束或进程退出释放锁，保留锁文件避免删除与重建竞态。若外部终端已经打开已保存的 Codex 线程，且 `thread/resume` 明确返回 −32600 与该线程的 `already has an active writer` 错误，在发送 `turn/start` 前只尝试一次 `thread/fork`，复制当时已保存的历史到独立线程，并沿用本轮工作目录、审批和工具配置。不终止占用者、不改写原线程。分支的新 ID 在开始本轮工作前保存，后续对话恢复该 ID；执行事件记录原 ID、新 ID 和原因。空 ID、与原线程相同的 ID、分支失败、认证/网络及其他恢复错误均明确失败，不改用空白线程、不循环重试。本轮工作开始后的错误不触发分支或重放。
   线程分支隔离会话状态，工作目录仍按本轮配置使用；它不会创建独立代码工作树。
 - **输出与事件**：文本在终端流式显示，结构化进度和输出持久化。委派事件使用任务 ID 0，并携带作用域键。
@@ -102,7 +102,7 @@ GUI 技术栈与启动边界见[配置参考](configuration.md#core-与前端)�
 
 `MockAdapter` 在不使用外部可执行程序或模型的情况下验证 Core，测试可控制审批、失败、取消和会话恢复。配置 `protocol = "mock"` 选择基础回显实现；command 可用非空占位值，不会实际执行。
 
-独立模拟模型基于 `tiny_http`，按脚本顺序返回 HTTP 响应，接受 Responses 和 Chat Completions 路径，由 fixture 提供相应响应体。它不检查凭据、不调用外部模型；请求记录在内存中（不含请求头），在服务停止时打印。fixture 不得包含密钥。
+独立模拟模型基于 `tiny_http`，按脚本顺序返回 HTTP 响应，接受 Responses 和 Chat Completions 路径，由 fixture 提供相应响应体。它不检查凭据、不调用外部模型；请求记录在内存中（不含请求头），在服务停止时打印；可用 expect_bearer 对测试用凭据做匹配断言，不记录请求中的实际凭据。fixture 不得包含密钥。
 
 ```bash
 cargo run -p omnistream --bin omnistream-mock-model -- fixtures/models/replies.json 127.0.0.1:4320

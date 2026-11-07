@@ -140,6 +140,13 @@ fn ensure(
             &message,
         )?;
         append_message(connection, &conversation, &message)?;
+        crate::notifications::insert(
+            connection,
+            &format!("confirmation:{}:{id}", item.id),
+            "approval_pending",
+            &item.draft.title,
+            &conversation,
+        )?;
     }
     item.confirmations.push(review);
     while item.confirmations.len() > 100 {
@@ -534,6 +541,43 @@ mod tests {
         time: u64,
     ) -> Result<Value, String> {
         action_at(path, 1, review, action, &args, time, "user")
+    }
+
+    #[test]
+    fn notifications_only_deliver_a_still_pending_confirmation_once() {
+        let (_dir, path) = setup("wait");
+        let store = Store::open(&path).unwrap();
+        let start = store
+            .notifications(
+                crate::notifications::Request {
+                    after: None,
+                    instance: None,
+                },
+                None,
+            )
+            .unwrap();
+        claim(&path, 50, 0).unwrap();
+        claim(&path, 50, 0).unwrap();
+        let poll = || {
+            store
+                .notifications(
+                    crate::notifications::Request {
+                        after: start["cursor"].as_i64(),
+                        instance: start["instance"].as_str().map(str::to_string),
+                    },
+                    None,
+                )
+                .unwrap()
+        };
+        let page = poll();
+        assert_eq!(page["items"].as_array().unwrap().len(), 1);
+        assert_eq!(page["items"][0]["kind"], "approval_pending");
+        assert_eq!(
+            page["items"][0]["conversation"],
+            "automation-confirmation:1:1"
+        );
+        act(&path, 1, "approve", json!({"revision":1}), 51).unwrap();
+        assert_eq!(poll()["items"], json!([]));
     }
 
     #[test]

@@ -1,4 +1,5 @@
-import { translate } from '../i18n';
+import { coreRequest } from './clientFetch';
+import type { CoreHealth } from './clientCredentials';
 
 export type Approval = {
   id: number;
@@ -17,25 +18,19 @@ export type ProviderModels = { models: ModelOption[]; reasoning: string[] };
 export type ModelCatalog = { providers: { id: string; name: string }[]; selection: ModelSelection };
 export type ConversationSettings = { title?: string | null; archived?: boolean; approval_mode: ApprovalMode };
 export type AgentCall = { task_id: number; scope: string; agent: string; task: { id: number; project: string; title: string; status: string; last_output?: string }; events: { event?: { type: string; delta?: string; message?: string; output?: string; method?: string; data?: unknown } }[]; approvals: Approval[] };
-export type ConversationDetail = { history: ConversationMessage[]; calls: AgentCall[]; settings: ConversationSettings; approvals?: Approval[] };
+export type NotificationSnapshot = { instance: string; cursor: number; scope: string };
+export type ConversationDetail = { exists: boolean; history: ConversationMessage[]; calls: AgentCall[]; settings: ConversationSettings; approvals?: Approval[]; notification_snapshot?: NotificationSnapshot };
+export type ConversationCursor = { updated_at: number; id: string };
+export type ConversationSummary = { id: string; title: string | null; updated_at: number };
+export type ConversationPage = { items: ConversationSummary[]; next_cursor: ConversationCursor | null; total: number };
+export type SystemNotification = { id: number; kind: 'task_completed' | 'task_failed' | 'approval_pending' | 'inbox_message'; title: string; conversation: string | null; channel: string | null; scope?: string; team?: string | null; owner?: string | null };
+export type NotificationPage = { instance: string; cursor: number; items: SystemNotification[] };
 
 const configuredUrl = import.meta.env.VITE_OMNISTREAM_URL as string | undefined;
 let baseUrl = (localStorage.getItem('omnistream.url') ?? configuredUrl ?? 'http://127.0.0.1:4317').replace(/\/$/, '');
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`${baseUrl}${path}`, {
-      ...init,
-      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
-    });
-  } catch {
-    throw new Error(translate('connection.addressError'));
-  }
-  const body = await response.json().catch(() => ({}));
-  if (response.status === 404 && path.startsWith('/conversation/')) throw new Error(translate('connection.interfaceError', { url: baseUrl }));
-  if (!response.ok) throw new Error(body.error ?? translate('request.failed', { status: response.status }));
-  return body as T;
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return coreRequest<T>(baseUrl, path, init);
 }
 
 export const api = {
@@ -48,7 +43,8 @@ export const api = {
     baseUrl = url.trim().replace(/\/$/, '');
     localStorage.setItem('omnistream.url', baseUrl);
   },
-  health: () => request<{ ok: boolean }>('/health'),
+  health: () => request<CoreHealth>('/health'),
+  notifications: (after: number | null, instance?: string) => request<NotificationPage>('/notifications/poll', { method: 'POST', body: JSON.stringify({ after, instance }) }),
   agentMemories: (id: number) => request<AgentMemory[]>(`/agents/${id}/memory`),
   deleteAgentMemory: (id: number, key: string) => request<{ deleted: boolean }>(`/agents/${id}/memory`, { method: 'POST', body: JSON.stringify({ operation: 'delete', key }) }),
   projects: () => request<{ name: string; path: string }[]>('/projects'),
@@ -57,7 +53,7 @@ export const api = {
   approvalMode: () => request<{ mode: ApprovalMode }>('/settings/approval-mode'),
   setApprovalMode: (mode: ApprovalMode) => request<{ mode: ApprovalMode }>('/settings/approval-mode', { method: 'POST', body: JSON.stringify({ mode }) }),
   conversation: (id: string) => request<ConversationMessage[]>(`/conversation?project=${encodeURIComponent(id)}`),
-  conversations: () => request<string[]>('/conversations'),
+  conversations: (cursor: ConversationCursor | null = null) => request<ConversationPage>('/conversations/list', { method: 'POST', body: JSON.stringify({ limit: 20, cursor }) }),
   conversationDetail: (conversation: string) => request<ConversationDetail>('/conversation/detail', { method: 'POST', body: JSON.stringify({ conversation }) }),
   conversationSettings: (conversation: string) => request<ConversationSettings>('/conversation/settings/read', { method: 'POST', body: JSON.stringify({ conversation }) }),
   saveConversationSettings: (conversation: string, settings: ConversationSettings) => request<ConversationSettings>('/conversation/settings', { method: 'POST', body: JSON.stringify({ conversation, settings }) }),
@@ -121,7 +117,7 @@ export type PluginConnection = { status: 'unconfigured' | 'connected' | 'disable
 export type PluginAction = { delivery_destination_fields?: string[] | null; id: string; write: boolean; input_schema: { properties: Record<string, { type: string; minimum?: number; maximum?: number; maxLength?: number; enum?: string[]; default?: unknown }>; required: string[] } };
 export type PluginResult = { data: unknown; next_cursor: string | null; next_page: number | null; sync_warning?: string };
 export type SlackMessage = { id: number; ts: string; user: string; own: boolean; text: string; thread_ts: string | null; deleted: boolean; edited: boolean };
-export type SlackMessages = { messages: SlackMessage[]; next_before: string | null };
+export type SlackMessages = { messages: SlackMessage[]; next_before: string | null; notification_snapshot?: NotificationSnapshot | null };
 export type SlackInboxState = { connection: PluginConnection; listener: { state: 'stopped' | 'connecting' | 'listening' | 'reconnecting' | 'error'; error: string | null; connected_at: number | null; last_event_at: number | null }; conversations: { channel: string; channel_type: string; ts: string; text: string; count: number }[] };
 export const slackApi = {
   inbox: () => request<SlackInboxState>('/plugins/slack/inbox'),

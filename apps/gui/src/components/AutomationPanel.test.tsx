@@ -7,15 +7,15 @@ import { api, automationApi, pluginApi, type Automation } from '../lib/api';
 beforeEach(() => { vi.spyOn(api, 'agents').mockResolvedValue([]); vi.spyOn(pluginApi, 'marketplace').mockResolvedValue([]); vi.spyOn(api, 'approvals').mockResolvedValue([]); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const item: Automation = { id: 3, title: '新闻日报', goal: '核实新闻来源', schedule: { kind: 'daily', hour: 9, minute: 0, utc_offset_minutes: 480 }, status: 'pending', next_run_at: null, conversation: 'inbox', runs: [] };
-function show() {
+function show(selectedId: number | null = 3) {
   const onOpen = vi.fn();
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><AutomationPanel server="test" conversation="current-chat" onOpenConversation={onOpen} /></QueryClientProvider>);
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><AutomationPanel selectedId={selectedId ?? undefined} server="test" conversation="current-chat" onOpenConversation={onOpen} /></QueryClientProvider>);
   return onOpen;
 }
 it('creates a recurring delegation without requiring a project and binds delivery to the current chat', async () => {
   vi.spyOn(automationApi, 'list').mockResolvedValue([]);
   const create = vi.spyOn(automationApi, 'create').mockResolvedValue({ ...item, status: 'active' });
-  show();
+  show(null);
   fireEvent.change(screen.getByLabelText('委托内容'), { target: { value: '每天核实新闻来源' } });
   fireEvent.change(screen.getByLabelText('UTC 偏移（分钟）'), { target: { value: '480' } });
   fireEvent.click(screen.getByRole('button', { name: '创建并启用' }));
@@ -78,7 +78,7 @@ it('configures only declared delivery actions with visible account and fixed des
   vi.mocked(pluginApi.marketplace).mockResolvedValue([{ manifest: { id: 'slack', name: 'Slack', version: '1', runtime: 'builtin', capabilities: [], permissions: [], actions: [] }, installed: true, installed_version: '1', connection: { status: 'connected', configured: true, enabled: true, allow_writes: true, account: 'fixture', verified_at: 1, last_error: null }, actions: [{ id: 'send_message', write: true, delivery_destination_fields: ['channel'], input_schema: { properties: { channel: { type: 'string' }, text: { type: 'string' } }, required: ['channel', 'text'] } }, { id: 'open_conversation', write: true, input_schema: { properties: {}, required: [] } }] }]);
   vi.spyOn(automationApi, 'list').mockResolvedValue([]);
   const create = vi.spyOn(automationApi, 'create').mockResolvedValue(item);
-  show();
+  show(null);
   fireEvent.change(screen.getByLabelText('委托内容'), { target: { value: 'Generate a summary' } });
   fireEvent.click(screen.getByText('日历、统计窗口与投递'));
   fireEvent.click(screen.getByRole('button', { name: '添加外部投递' }));
@@ -114,4 +114,45 @@ it('configures per-occurrence confirmation and preserves it during task edits', 
   fireEvent.change(screen.getByLabelText('到时未确认'), { target: { value: 'run' } });
   fireEvent.click(screen.getByRole('button', { name: '保存' }));
   await waitFor(() => expect(update).toHaveBeenCalledWith(3, expect.objectContaining({ confirmation: { before_seconds: 600, on_timeout: 'run' } })));
+});
+
+it('shows only the referenced task, edits without enabling and refreshes its current status', async () => {
+  const list = vi.spyOn(automationApi, 'list').mockResolvedValue([item, { ...item, id: 4, title: '其他任务' }]);
+  const update = vi.spyOn(automationApi, 'update').mockResolvedValue({ ...item, goal: '新的执行内容' });
+  const action = vi.spyOn(automationApi, 'action').mockImplementation(async () => {
+    list.mockResolvedValue([{ ...item, goal: '新的执行内容', status: 'active' }]);
+    return { ...item, status: 'active' };
+  });
+  show(3);
+  expect(await screen.findByText('新闻日报')).toBeVisible();
+  expect(screen.queryByText('其他任务')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '创建并启用' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '修改' }));
+  expect(screen.queryByRole('button', { name: '确认启用' })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('委托内容'), { target: { value: '新的执行内容' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存' }));
+  await waitFor(() => expect(update).toHaveBeenCalledWith(3, expect.objectContaining({ goal: '新的执行内容' })));
+  expect(action).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: '确认启用' }));
+  expect(await screen.findByText('已启用')).toBeVisible();
+  expect(action).toHaveBeenCalledWith(3, 'activate');
+});
+
+it('shows a missing referenced task without unrelated tasks or creation controls', async () => {
+  vi.spyOn(automationApi, 'list').mockResolvedValue([item]);
+  show(99);
+  expect(await screen.findByText('该长期任务已不存在')).toBeVisible();
+  expect(screen.queryByText('新闻日报')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '创建并启用' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '确认启用' })).not.toBeInTheDocument();
+});
+
+it('allows a failed detail load to be retried without presenting it as missing', async () => {
+  const list = vi.spyOn(automationApi, 'list').mockRejectedValueOnce(new Error('connection failed')).mockResolvedValue([item]);
+  show(3);
+  expect(await screen.findByRole('alert')).toHaveTextContent('connection failed');
+  expect(screen.queryByText('该长期任务已不存在')).not.toBeInTheDocument();
+  expect(list).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: '重试' }));
+  expect(await screen.findByText('新闻日报')).toBeVisible();
 });

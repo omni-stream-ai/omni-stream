@@ -2,6 +2,7 @@ import { isTauri, invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { ErrorState, LoadingState } from './StateView';
 import { useI18n } from '../i18n';
+import { isNativeMobile } from '../lib/platform';
 
 type Settings = { allowLan: boolean; autostart: boolean };
 
@@ -12,7 +13,7 @@ export function DesktopSettings() {
   const [busy, setBusy] = useState(false);
   const [retry, setRetry] = useState<() => void>(() => () => {});
   const [changed, setChanged] = useState(false);
-  const desktop = isTauri() && !/Android|iPhone|iPad/i.test(navigator.userAgent);
+  const desktop = isTauri() && !isNativeMobile();
   async function load() {
     setBusy(true); setError('');
     try { setSettings(await invoke<Settings>('desktop_settings')); }

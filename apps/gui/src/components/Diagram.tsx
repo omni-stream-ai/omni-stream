@@ -1,3 +1,4 @@
+import { randomId } from '../lib/uuid';
 import { ErrorState, LoadingState } from './StateView';
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
@@ -14,7 +15,7 @@ export function Diagram({ source }: { source: string }) {
     if (container.current) container.current.innerHTML = '';
     void import('mermaid').then(async ({ default: mermaid }) => {
       mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'neutral', suppressErrorRendering: true });
-      const { svg } = await mermaid.render(`diagram-${crypto.randomUUID()}`, source);
+      const { svg } = await mermaid.render(`diagram-${randomId()}`, source);
       if (active && container.current) container.current.innerHTML = svg;
     }).catch(() => { if (active) setError(t('diagram.invalid')); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };

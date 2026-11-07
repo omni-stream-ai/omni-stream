@@ -1,0 +1,9 @@
+{
+  "app": {
+    "windows": [{ "label": "main", "title": "OmniStream", "width": 390, "height": 844 }]
+  },
+  "bundle": {
+    "externalBin": [],
+    "iOS": { "minimumSystemVersion": "14.0" }
+  }
+}

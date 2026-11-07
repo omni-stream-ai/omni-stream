@@ -20,6 +20,9 @@ pub struct Step {
     pub disconnect: bool,
     #[serde(default)]
     pub body: Value,
+    /// Optional fixture-only authentication assertion; headers are never recorded.
+    #[serde(default)]
+    pub expect_bearer: Option<String>,
     #[serde(default)]
     pub events: Vec<Value>,
 }
@@ -56,6 +59,19 @@ impl MockServer {
                     );
                     continue;
                 };
+                if let Some(expected) = &step.expect_bearer {
+                    let accepted = request.headers().iter().any(|header| {
+                        header.field.equiv("Authorization")
+                            && header.value.as_str() == format!("Bearer {expected}")
+                    });
+                    if !accepted {
+                        let _ = request.respond(
+                            tiny_http::Response::from_string("fixture authentication mismatch")
+                                .with_status_code(401),
+                        );
+                        continue;
+                    }
+                }
                 let deadline = std::time::Instant::now() + Duration::from_millis(step.delay_ms);
                 while std::time::Instant::now() < deadline && !stopping.load(Ordering::Relaxed) {
                     std::thread::sleep(Duration::from_millis(10));

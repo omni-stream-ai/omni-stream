@@ -16,12 +16,16 @@ OmniStream uses documentation-driven development. The detailed module specificat
 | Document | Scope |
 | --- | --- |
 | [Chinese overview](zh/README.md) | Features, quick start, builds, and deployment |
+| [Native mobile](zh/mobile.md) | Android/iOS setup, Firebase client setup, remote Core, development, builds, signing, and validation limits |
+| [Packaging and releases](zh/releases.md) | GitHub Actions, version rules, downloads, signing secrets, changelogs, and release retries |
 | [Configuration](zh/configuration.md) | Model providers, CLI, desktop settings, network access, and site metadata |
+| [Client access](zh/access.md) | Remote Core authorization, approval from existing clients, first-device bootstrap, and revocation |
 | [Recurring delegations](zh/automations.md) | Scheduling, calendars, per-run confirmation, delivery authorization, and execution records |
-| [Sessions](zh/sessions.md) | Agent collaboration, message presentation, session settings, and user input |
+| [Sessions](zh/sessions.md) | Session list ordering and pagination, Agent collaboration, message presentation, session settings, and user input |
 | [Named Agents](zh/agents.md) | Roles, @mentions, memory, context isolation, plugin scope, and recurring tasks |
 | [Built-in skills](zh/builtin-skills.md) | Assistant, recurring task, and project management rules |
-| [GUI](zh/gui.md) | Shared presentation, empty states, failures, retries, and localization |
+| [GUI](zh/gui.md) | Shared presentation, system notifications and read receipts, empty states, failures, retries, and localization |
+| [Remote push](zh/push.md) | Android FCM, browser Web Push, bundled Core credentials, automatic device registration, delivery, and failures |
 | [Plugins](zh/plugins.md) | App connectors, Chrome MCP, Agent tools, credentials, Slack inbox, and write approvals |
 | [Adapters and Core](zh/adapters.md) | Adapter contracts, protocol support, limitations, and frontend boundaries |
 | [Testing](zh/testing.md) | Core, GUI, mock services, browser regression, and desktop validation limits |

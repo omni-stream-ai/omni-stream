@@ -11,13 +11,20 @@ const state: SlackInboxState = {
   conversations: [{ channel: 'D123', channel_type: 'im', ts: '1700000001.000001', text: 'Hello from Slack', count: 1 }],
 };
 const message = { id: 1, ts: '1700000001.000001', user: 'U456', text: 'Hello from Slack', own: false, deleted: false, edited: false, thread_ts: null };
-function show() {
+function show(requestedChannel?: string) {
   const onConfigure = vi.fn();
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><I18nProvider><SlackInbox server="test-core" onConfigure={onConfigure} /></I18nProvider></QueryClientProvider>);
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><I18nProvider><SlackInbox server="test-core" onConfigure={onConfigure} requestedChannel={requestedChannel} /></I18nProvider></QueryClientProvider>);
   return { onConfigure };
 }
 beforeEach(() => { localStorage.clear(); vi.spyOn(slackApi, 'inbox').mockResolvedValue(state); vi.spyOn(slackApi, 'messages').mockResolvedValue({ messages: [message], next_before: null }); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it('opens the channel requested by a notification instead of the latest channel', async () => {
+  vi.mocked(slackApi.inbox).mockResolvedValue({ ...state, conversations: [...state.conversations, { channel: 'D456',channel_type: 'im',ts: '1700000000.000001',text: 'Earlier channel',count: 1 }] });
+  show('D456');
+  await screen.findByRole('region', { name: 'Slack 消息' });
+  expect(slackApi.messages).toHaveBeenCalledWith('D456');
+});
 
 it('shows persisted messages and sends a thread reply with the reviewed personal identity', async () => {
   const send = vi.spyOn(slackApi, 'send').mockResolvedValue({ data: { ok: true }, next_cursor: null, next_page: null });

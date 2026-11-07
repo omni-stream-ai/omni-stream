@@ -1,3 +1,4 @@
+import { randomId } from '../lib/uuid';
 import { ErrorState } from './StateView';
 import { useEffect, useRef, useState, ReactNode } from 'react';
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
@@ -70,7 +71,7 @@ function Editor({ busy, projects, agents, searchProjects, controls, onSend, onCo
       if (file.size > 10 * 1024 * 1024) { setError(t('composer.fileTooLarge', { name: file.name })); continue; }
       try {
         const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error(t('composer.readFailed'))); reader.readAsDataURL(file); });
-        const id = crypto.randomUUID();
+        const id = randomId();
         const item = { id, name: file.name, type: file.type || 'application/octet-stream', data, inline };
         setAttachments(value => [...value, item]);
         if (inline) {

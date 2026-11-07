@@ -1,39 +1,26 @@
-import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bot, Check, Link, X, Plus, Settings2, Folder, Menu, Search, Clock3, Puzzle, Inbox } from 'lucide-react';
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { ClientAuthGate } from './components/ClientAuthGate';
+import { ClientAccessManager } from './components/ClientAccessManager';
+import { Dialog } from './components/Dialog';
+import { accessChange, clientCredentialKey, normalizeCoreUrl } from './lib/clientCredentials';
+import { randomId } from './lib/uuid';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Bell, Bot, Check, Link, Plus, Settings2, Folder, Menu, Search, Clock3, Puzzle, Inbox } from 'lucide-react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, type PluginSetupContext } from './lib/api';
 import { EmptyState, ErrorState, LoadingState } from './components/StateView';
 import { ConversationView } from './components/ConversationView';
 import { AutomationPanel } from './components/AutomationPanel';
+import { AutomationList } from './components/AutomationList';
 import { AgentsPanel } from './components/AgentsPanel';
 import { PluginMarketplace } from './components/PluginMarketplace';
 import { SlackInbox } from './components/SlackInbox';
 import { DesktopSettings } from './components/DesktopSettings';
-import { ConversationItem } from './components/ConversationItem';
+import { NotificationSettings } from './components/NotificationSettings';
+import { useSystemNotifications } from './lib/useSystemNotifications';
+import { ConversationList } from './components/ConversationList';
 import { useI18n, type Locale } from './i18n';
-
-function conversationTitle(history: { role: string; content: string }[], fallback: string) {
-  const source = history.find((item) => item.role === 'assistant' && typeof item.content === 'string' && item.content.trim())?.content
-    ?? history.find((item) => item.role === 'user' && typeof item.content === 'string' && item.content.trim())?.content;
-  const title = (source ?? '').replace(/[#*_`>\[\]]/g, '').split(/\r?\n/).map((line) => line.trim()).find(Boolean);
-  return title || fallback;
-}
-
-function Dialog({ title, onClose, children, className }: { title: string; onClose: () => void; children: ReactNode; className?: string }) {
-  const { t } = useI18n();
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    ref.current?.showModal();
-    ref.current?.querySelector<HTMLInputElement>('input')?.focus();
-  }, []);
-  return <dialog ref={ref} className={`dialog${className ? ` ${className}` : ''}`} aria-label={title} onCancel={onClose} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <div className="dialog-body">
-      <div className="dialog-heading"><h2>{title}</h2><button type="button" className="icon-button" aria-label={t('common.close')} title={t('common.close')} onClick={onClose}><X size={18} /></button></div>
-      {children}
-    </div>
-  </dialog>;
-}
+import { isNativeMobile } from './lib/platform';
 
 function ProjectOptions({ recentProjects, knownProjects, search, current, selectedValue, onChoose, ready }: { ready: boolean; recentProjects: string[]; knownProjects: string[]; search: string; current: string; selectedValue?: string; onChoose: (value: string) => void }) {
   const { t } = useI18n();
@@ -62,18 +49,22 @@ export default function App() {
   const view = route.view;
   const [project, setProject] = useState('');
   const [conversation, setConversation] = useState(() => {
-    const id = route.conversationId ?? localStorage.getItem('omnistream.conversation') ?? crypto.randomUUID();
+    const id = route.conversationId ?? localStorage.getItem('omnistream.conversation') ?? randomId();
     localStorage.setItem('omnistream.conversation', id);
     return id;
   });
   const [serverUrl, setServerUrl] = useState(api.baseUrl);
   const [connectedUrl, setConnectedUrl] = useState(api.baseUrl);
-  const [dialog, setDialog] = useState<'connection' | 'automation' | 'project' | 'plugins' | 'agents' | null>(null);
+  const [automationId, setAutomationId] = useState<number | 'new' | undefined>();
+  const [dialog, setDialog] = useState<'connection' | 'automation' | 'project' | 'plugins' | 'agents' | 'notifications' | null>(() =>
+    isNativeMobile() && !localStorage.getItem('omnistream.url') && !import.meta.env.VITE_OMNISTREAM_URL ? 'connection' : null
+  );
   const [projectSearch, setProjectSearch] = useState('');
   const [pluginSetup, setPluginSetup] = useState<PluginSetupContext>();
   const [projectSelection, setProjectSelection] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const projectInputRef = useRef<HTMLInputElement>(null);
+  const sidebarScroll = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (route.conversationId && route.conversationId !== conversation) setConversation(route.conversationId);
@@ -103,6 +94,22 @@ export default function App() {
     rememberProject(value);
     setDialog(null);
   };
+  const health = useQuery({
+    queryKey: ['health', connectedUrl],
+    queryFn: api.health,
+    retry: false,
+    refetchInterval: query => query.state.status === 'error' ? false : 15_000,
+  });
+  const accessReady = health.isSuccess && health.data.access?.authorized !== false;
+  const needsAccess = health.isSuccess && health.data.access?.authorized === false;
+  useEffect(() => {
+    let normalized: string;
+    try { normalized = normalizeCoreUrl(connectedUrl); } catch { return; }
+    const changed = (event: Event) => { if ((event as CustomEvent<string>).detail === normalized) void health.refetch(); };
+    const storage = (event: StorageEvent) => { if (!event.key || event.key === clientCredentialKey(normalized)) void health.refetch(); };
+    window.addEventListener(accessChange, changed); window.addEventListener('storage', storage);
+    return () => { window.removeEventListener(accessChange, changed); window.removeEventListener('storage', storage); };
+  }, [connectedUrl, health.refetch]);
   const [pathQuery, setPathQuery] = useState('');
   useEffect(() => {
     const timer = window.setTimeout(() => setPathQuery(projectSearch.trim()), 180);
@@ -112,23 +119,18 @@ export default function App() {
   const pathSuggestions = useQuery({
     queryKey: ['project-paths', connectedUrl, pathQuery],
     queryFn: () => api.completeProjectPath(pathQuery),
-    enabled: dialog === 'project' && /^(\/|~)/.test(pathQuery),
+    enabled: accessReady && dialog === 'project' && /^(\/|~)/.test(pathQuery),
     retry: false,
     staleTime: 5000,
   });
-  const health = useQuery({
-    queryKey: ['health', connectedUrl],
-    queryFn: api.health,
-    retry: false,
-    refetchInterval: query => query.state.status === 'error' ? false : 15_000,
-  });
+  const notifications = useSystemNotifications(connectedUrl, accessReady, path => { setDialog(null); navigate(path); });
   const recentProjects = useMemo(() => {
     const saved = (() => {
       try { return JSON.parse(localStorage.getItem('omnistream.projects') ?? '[]') as unknown; } catch { return []; }
     })();
     return [...new Set(Array.isArray(saved) ? saved : [])].filter((item): item is string => typeof item === 'string').slice(0, 12);
   }, [project]);
-  const registeredProjects = useQuery({ queryKey: ['projects', connectedUrl], queryFn: api.projects, enabled: health.isSuccess });
+  const registeredProjects = useQuery({ queryKey: ['projects', connectedUrl], queryFn: api.projects, enabled: accessReady });
   const knownProjects = useMemo(() => [...new Set((registeredProjects.data ?? []).map(item => item.path).filter(Boolean))], [registeredProjects.data]);
   const normalizedProjectSearch = projectSearch.trim().toLowerCase();
   const matchingRecentProjects = recentProjects.filter((value) => !normalizedProjectSearch || value.toLowerCase().includes(normalizedProjectSearch));
@@ -138,31 +140,6 @@ export default function App() {
   useEffect(() => {
     setProjectSelection(0);
   }, [projectSearch, pathSuggestions.data]);
-  const conversations = useQuery({
-    queryKey: ['conversations', connectedUrl],
-    queryFn: api.conversations,
-    enabled: health.isSuccess,
-    retry: false,
-    refetchInterval: query => query.state.status === 'error' ? false : 15_000,
-  });
-  const conversationSettings = useQueries({
-    queries: (conversations.data ?? []).map(id => ({ queryKey: ['conversation-settings', connectedUrl, id], queryFn: () => api.conversationSettings(id), enabled: health.isSuccess, staleTime: 60_000 })),
-  });
-  const conversationHistories = useQueries({
-    queries: (conversations.data ?? []).map((id) => ({
-      queryKey: ['conversation', connectedUrl, id],
-      queryFn: () => api.conversation(String(id)),
-      enabled: health.isSuccess,
-      staleTime: 30_000,
-    })),
-  });
-  const history = useQuery({
-    queryKey: ['conversation', connectedUrl, conversation],
-    queryFn: () => api.conversation(conversation),
-    enabled: health.isSuccess,
-    retry: false,
-    refetchInterval: query => query.state.status === 'error' ? false : 15_000,
-  });
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['approvals'] });
     void queryClient.invalidateQueries({ queryKey: ['conversation', connectedUrl, conversation] });
@@ -190,6 +167,7 @@ export default function App() {
       const settings = await api.renameConversation(id, title ?? '');
       queryClient.setQueryData(['conversation-settings', connectedUrl, id], settings);
       await queryClient.invalidateQueries({ queryKey: ['conversation-detail', connectedUrl, id] });
+      await queryClient.invalidateQueries({ queryKey: ['conversations', connectedUrl] });
       return;
     }
     if (action === 'delete') {
@@ -201,35 +179,42 @@ export default function App() {
     } else await api.archiveConversation(id);
     await queryClient.invalidateQueries({ queryKey: ['conversations', connectedUrl] });
   };
-  const newConversation = () => selectConversation(crypto.randomUUID());
+  const newConversation = () => selectConversation(randomId());
   return (
     <main className="shell">
       <header className="topbar">
         <div className="brand"><button type="button" className="icon-button sidebar-toggle" aria-label={t('nav.toggleSidebar')} title={t('nav.toggleSidebar')} aria-expanded={sidebarOpen} aria-controls="workspace-sidebar" onClick={() => setSidebarOpen(!sidebarOpen)}><Menu size={19} /></button><img className="brand-logo" src="/omnistream-logo.svg" alt="OmniStream" /></div>
         <div className="header-tools">
-          <span className={`connection-state ${health.isSuccess ? 'online' : health.isError ? 'offline' : 'checking'}`}>
+          <span className={`connection-state ${health.isSuccess ? needsAccess ? 'checking' : 'online' : health.isError ? 'offline' : 'checking'}`}>
             <span className="connection-dot" />
-            {health.isSuccess ? t('status.connected') : health.isError ? t('status.coreOffline') : t('status.connecting')}
+            {health.isSuccess ? needsAccess ? t('access.required') : t('status.connected') : health.isError ? t('status.coreOffline') : t('status.connecting')}
           </span>
           <label className="language-picker"><span className="sr-only">{t('language.label')}</span><select aria-label={t('language.label')} value={locale} onChange={event => setLocale(event.target.value as Locale)}><option value="zh-CN">{t('language.zh')}</option><option value="en-US">{t('language.en')}</option></select></label>
+          <ClientAccessManager key={connectedUrl} server={connectedUrl} enabled={accessReady && !!health.data?.access} />
+          <button type="button" className={`icon-button notification-trigger${notifications.feedError || notifications.readError || notifications.permissionError || notifications.remote.error || ['paused', 'disabled', 'unregistered'].includes(notifications.remote.device?.state ?? '') ? ' has-error' : ''}`} title={t(notifications.feedError ? 'notifications.paused' : 'notifications.settings')} aria-label={t('notifications.settings')} disabled={!accessReady} onClick={() => setDialog('notifications')}><Bell size={18} /></button>
           <button type="button" className="icon-button" title={t('nav.connectionSettings')} aria-label={t('nav.connectionSettings')} onClick={() => setDialog('connection')}><Settings2 size={18} /></button>
         </div>
       </header>
+      {accessReady && dialog === 'notifications' && <Dialog title={t('notifications.settings')} onClose={() => setDialog(null)}><NotificationSettings state={notifications} /></Dialog>}
       {dialog === 'connection' ? <Dialog title={t('dialog.connectionSettings')} onClose={() => setDialog(null)}>
         <DesktopSettings />
         <form className="dialog-form" onSubmit={reconnect}>
+          {isNativeMobile() && <p className="muted">{t('dialog.mobileCoreHint')}</p>}
           <label>{t('dialog.coreAddress')}<input autoFocus required type="url" aria-label={t('dialog.coreAddress')} value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="http://127.0.0.1:4317" /></label>
           <div className="dialog-actions"><button type="button" className="ghost" onClick={() => setDialog(null)}>{t('common.cancel')}</button><button type="submit" className="primary"><Link size={14} />{t('common.connect')}</button></div>
         </form>
       </Dialog> : null}
-      {dialog === 'automation' ? <Dialog title={t('automation.title')} className="automation-dialog" onClose={() => setDialog(null)}>
-        <AutomationPanel server={connectedUrl} conversation={conversation} onOpenConversation={id => { selectConversation(id); setDialog(null); }} />
+      {accessReady && dialog === 'automation' ? <Dialog title={t(automationId === undefined ? 'automation.title' : automationId === 'new' ? 'automation.create' : 'automation.details')} className="automation-dialog" onClose={() => setDialog(null)}>
+        {automationId === undefined ? <AutomationList server={connectedUrl} onOpen={setAutomationId} onCreate={() => setAutomationId('new')} /> : <>
+          <button type="button" className="ghost automation-back" onClick={() => setAutomationId(undefined)}>{t('automation.backToList')}</button>
+          <AutomationPanel key={automationId} selectedId={automationId === 'new' ? undefined : automationId} onCreated={setAutomationId} server={connectedUrl} conversation={conversation} onOpenConversation={id => { selectConversation(id); setDialog(null); }} />
+        </>}
       </Dialog> : null}
-      {dialog === 'plugins' ? <Dialog title={t('plugins.title')} className="plugin-marketplace-dialog" onClose={() => setDialog(null)}>
+      {accessReady && dialog === 'plugins' ? <Dialog title={t('plugins.title')} className="plugin-marketplace-dialog" onClose={() => setDialog(null)}>
         <PluginMarketplace key={connectedUrl} server={connectedUrl} initialSetup={pluginSetup} onSetupStarted={id => { selectConversation(id); setDialog(null); void queryClient.invalidateQueries({ queryKey: ['conversations', connectedUrl] }); }} />
       </Dialog> : null}
-      {dialog === 'agents' ? <Dialog title={t('agents.title')} className="automation-dialog" onClose={() => setDialog(null)}><AgentsPanel server={connectedUrl} /></Dialog> : null}
-      {dialog === 'project' ? <Dialog title={t('dialog.selectProject')} className="project-dialog" onClose={() => setDialog(null)}>
+      {accessReady && dialog === 'agents' ? <Dialog title={t('agents.title')} className="automation-dialog" onClose={() => setDialog(null)}><AgentsPanel server={connectedUrl} /></Dialog> : null}
+      {accessReady && dialog === 'project' ? <Dialog title={t('dialog.selectProject')} className="project-dialog" onClose={() => setDialog(null)}>
         <div className="project-picker">
           <label className="project-search"><Search size={16} /><input autoFocus value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === 'ArrowDown' && projectCandidates.length) { event.preventDefault(); setProjectSelection((index) => Math.min(index + 1, projectCandidates.length - 1)); } if (event.key === 'ArrowUp' && projectCandidates.length) { event.preventDefault(); setProjectSelection((index) => Math.max(index - 1, 0)); } if (event.key === 'Enter' && (selectedProjectCandidate || projectSearch.trim())) { event.preventDefault(); chooseProject(selectedProjectCandidate ?? projectSearch.trim()); } }} placeholder={t('dialog.searchProject')} />{isPathSearch && pathSuggestions.isFetching ? <span className="project-loading" role="status" aria-label={t('common.loading')} /> : null}</label>
           {!isPathSearch && registeredProjects.isPending && <LoadingState />}
@@ -253,7 +238,7 @@ export default function App() {
             action={<button className="ghost" type="button" onClick={() => setDialog('connection')}><Settings2 size={14} />{t('connection.checkAddress')}</button>} />
           <p className="failure-address">{connectedUrl}</p>
         </section>
-      ) : <section className="content">
+      ) : needsAccess ? <ClientAuthGate key={connectedUrl} server={connectedUrl} onAuthorized={health.refetch} onChangeServer={() => setDialog('connection')} /> : health.isPending ? <section className="connection-failure"><LoadingState /></section> : <section className="content">
         <aside id="workspace-sidebar" className={`sidebar${sidebarOpen ? ' is-open' : ''}`}>
           <button className="new-conversation primary" onClick={newConversation}><Plus size={16} />{t('nav.newConversation')}</button>
           <nav className="sidebar-nav">
@@ -261,25 +246,15 @@ export default function App() {
             <button type="button" className="new-conversation ghost" onClick={() => { setDialog('agents'); setSidebarOpen(false); }}><Bot size={16} />{t('agents.title')}</button>
             <button type="button" className="new-conversation ghost" aria-current={view === 'slack' ? 'page' : undefined} onClick={() => { navigate('/slack'); setSidebarOpen(false); }}><Inbox size={16} />{t('slack.inbox')}</button>
           </nav>
-          <div className="sidebar-scroll">
-          <div className="section-heading sidebar-heading"><h2>{t('nav.conversations')}</h2><span className="count">{(conversations.data?.length ?? 0) + (conversations.data?.includes(conversation) ? 0 : 1)}</span></div>
-          <div className="conversation-list">
-            {conversations.isPending && <LoadingState />}
-            {!conversations.data?.includes(conversation) ? <div className={`conversation-row${view === 'chat' ? ' active' : ''}`}><button type="button" className="conversation-item" aria-current={view === 'chat' ? 'page' : undefined} onClick={() => selectConversation(conversation)}><span>{t('conversation.new')}</span></button></div> : null}
-            {(conversations.data ?? []).map((id, index) => {
-              const historyForTitle = id === conversation ? (history.data ?? []) : (conversationHistories[index]?.data ?? []);
-              const title = conversationSettings[index]?.data?.title || conversationTitle(historyForTitle, t('conversation.new'));
-              return <ConversationItem key={id} title={title} active={view === 'chat' && id === conversation} onSelect={() => selectConversation(id)} onAction={(action, name) => conversationAction(id, action, name)} />;
-            })}
-            {conversations.isError ? <ErrorState compact title={t('conversation.loadFailed')} description={t('conversation.listUnavailable')} onRetry={() => { void conversations.refetch(); }} retrying={conversations.isFetching} /> : null}
-          </div>
-          <button type="button" className="new-conversation ghost" onClick={() => setDialog('automation')}><Clock3 size={16} />{t('automation.title')}</button>
+          <div className="sidebar-scroll" ref={sidebarScroll}>
+          <ConversationList key={connectedUrl} server={connectedUrl} conversation={conversation} active={view === 'chat'} enabled={accessReady} scrollContainer={sidebarScroll} onSelect={selectConversation} onAction={conversationAction} />
+          <button type="button" className="new-conversation ghost" onClick={() => { setAutomationId(undefined); setDialog('automation'); }}><Clock3 size={16} />{t('automation.title')}</button>
           </div>
           <div className="sidebar-footer"><button type="button" className="project-trigger" onClick={() => { setProjectSearch(''); setDialog('project'); }} title={project || t('nav.selectProject')}><Folder size={14} /><span>{project || t('nav.selectProject')}</span><kbd>⌘/Ctrl⇧P</kbd></button><input ref={projectInputRef} id="project-path" value={project} onChange={(event) => setProject(event.target.value)} title={project} placeholder={t('nav.projectPath')} /></div>
         </aside>
         <section className="workspace">
-          {view === 'slack' && <SlackInbox key={connectedUrl} server={connectedUrl} onConfigure={() => { setPluginSetup(undefined); setDialog('plugins'); }} />}
-          {view === 'chat' && <ConversationView key={connectedUrl + conversation} onConfigurePlugin={context => { setPluginSetup(context); setDialog('plugins'); }} id={conversation} server={connectedUrl} project={project} projects={[...new Set([...recentProjects, ...knownProjects])]} onNew={newConversation} />}
+          {view === 'slack' && <SlackInbox onRead={health.isSuccess ? notifications.read : undefined} key={connectedUrl} server={connectedUrl} requestedChannel={new URLSearchParams(location.search).get('channel')} onConfigure={() => { setPluginSetup(undefined); setDialog('plugins'); }} />}
+          {view === 'chat' && <ConversationView onRead={health.isSuccess ? notifications.read : undefined} onOpenAutomation={id => { setAutomationId(id); setDialog('automation'); }} key={connectedUrl + conversation} onConfigurePlugin={context => { setPluginSetup(context); setDialog('plugins'); }} id={conversation} server={connectedUrl} project={project} projects={[...new Set([...recentProjects, ...knownProjects])]} onNew={newConversation} />}
         </section>
       </section>}
     </main>
