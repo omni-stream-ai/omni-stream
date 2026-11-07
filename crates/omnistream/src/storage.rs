@@ -420,7 +420,12 @@ impl Store {
     }
     pub fn save(&mut self, task: &AgentExecution) -> Result<(), String> {
         let data = serde_json::to_string(task).map_err(|e| e.to_string())?;
-        let tx = self.0.transaction().map_err(|e| e.to_string())?;
+        // Acquire the writer lock before reading: a deferred WAL snapshot cannot
+        // be upgraded after another writer commits, regardless of busy_timeout.
+        let tx = self
+            .0
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
         let previous: Option<String> = tx
             .query_row(
                 "SELECT json_extract(data,'$.status') FROM tasks WHERE id=?1",
@@ -599,6 +604,82 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_save_waits_for_a_writer_before_reading_its_status() {
+        use std::{
+            sync::atomic::{AtomicBool, Ordering},
+            time::{Duration, Instant},
+        };
+        static WAITING_FOR_WRITER: AtomicBool = AtomicBool::new(false);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        let mut store = Store::open(&path).unwrap();
+        let mut task = crate::App::default().create_execution("demo", "concurrent", "goal");
+        store.save(&task).unwrap();
+        store.save_call(task.id, "chat", "scope", "agent").unwrap();
+        store
+            .0
+            .busy_handler(Some(|attempt| {
+                WAITING_FOR_WRITER.store(true, Ordering::Release);
+                std::thread::sleep(Duration::from_millis(1));
+                attempt < 5000
+            }))
+            .unwrap();
+
+        let mut other = Connection::open(&path).unwrap();
+        let writer = other
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        writer
+            .execute(
+                "INSERT INTO app_settings(key,data) VALUES('concurrent','true')",
+                [],
+            )
+            .unwrap();
+        task.status = "unverified".into();
+        let saving = std::thread::spawn(move || store.save(&task));
+
+        // Release the competing writer only after save is blocked or has failed.
+        // A deferred read-then-write transaction fails without invoking busy_handler.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !WAITING_FOR_WRITER.load(Ordering::Acquire)
+            && !saving.is_finished()
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        writer.commit().unwrap();
+        saving.join().unwrap().unwrap();
+        assert!(WAITING_FOR_WRITER.load(Ordering::Acquire));
+
+        let reopened = Store::open(&path).unwrap();
+        assert_eq!(reopened.load().unwrap()[0].status, "unverified");
+        assert_eq!(
+            reopened.setting("concurrent").unwrap(),
+            Some(serde_json::json!(true))
+        );
+        assert_eq!(
+            reopened
+                .events_after(0)
+                .unwrap()
+                .iter()
+                .filter(|event| event["kind"] == "task.saved")
+                .count(),
+            2
+        );
+        let notifications: i64 = reopened
+            .0
+            .query_row(
+                "SELECT COUNT(*) FROM notifications WHERE event_key='call:1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(notifications, 1);
+    }
+
     #[test]
     fn conversation_preferences_survive_restart_without_leaking() {
         let dir = tempfile::tempdir().unwrap();

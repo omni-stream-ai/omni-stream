@@ -20,6 +20,11 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if std::thread::panicking() {
+            if let Ok(log) = std::fs::read_to_string(self.home.path().join("core.stderr.log")) {
+                eprintln!("Core stderr:\n{log}");
+            }
+        }
     }
 }
 fn wait(mut ready: impl FnMut() -> bool) {
@@ -83,7 +88,9 @@ plugin_transport = "disabled"
             .env("OMNISTREAM_HOME", home.path())
             .current_dir(home.path())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::from(
+                std::fs::File::create(home.path().join("core.stderr.log")).unwrap(),
+            ))
             .spawn()
             .unwrap();
         let fixture = Self {

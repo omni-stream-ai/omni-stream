@@ -89,6 +89,8 @@ HTTP 客户端通过 `POST /agent-calls/<id>/cancel` 取消会话内的 Agent �
 
 Core 负责 SQLite、Agent 进程、会话、事件和审批状态，CLI 是当前调试前端。GUI 应通过 Core HTTP API、事件流或 `omnistream-core` 中适用于前端的审批与协议模型接入，不依赖终端渲染代码。
 
+任务状态、`task.saved` 事件和终态通知在同一 SQLite 写事务中提交；读取旧状态前先取得写锁，并发写入沿用 5 秒锁等待上限，避免 WAL 读事务升级时立即失败。
+
 源码开发可通过项目根目录的 Makefile 启动 Core，见[运行说明](configuration.md#core-与前端)。安装后也可直接运行 `omnistream serve`：
 
 ```bash

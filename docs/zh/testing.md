@@ -16,6 +16,8 @@ Core 集成测试的模拟 Agent 调用 PATH 中的 `python3`，需要 Python 3.
 
 运行浏览器回归前先执行 `cargo build -p omnistream`，再运行 `pnpm --filter @omnistream/gui test:e2e`。浏览器可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定，例如使用当前系统安装的 Chrome。Playwright 自动启动独立 Vite 服务；用例启动隔离的 Core 和模拟模型、Agent 或插件服务，不使用生产数据与真实账号。
 
+开发环境设置 HTTP(S) 代理时，将 `127.0.0.1,localhost,::1` 加入 `NO_PROXY`，确保测试中的 Core 与模拟服务通过回环直连；容器验证时也需传入，避免代理造成空响应或 502 干扰结果。
+
 ## 验证范围
 
 NixOS 本机使用[桌面开发环境](README.md#桌面端)后，Tauri 环境检查已识别 WebKitGTK 4.1 和 librsvg，pkg-config 可发现 D-Bus 的 `dbus-1.pc`；准备本机 Core sidecar 后桌面 `cargo check` 与 `cargo build --locked --manifest-path apps/gui/src-tauri/Cargo.toml` 均通过。本次仅验证依赖与编译，未验收真实窗口、安装包及系统通知展示。
@@ -117,10 +119,12 @@ actionlint .github/workflows/release.yml
 
 当前已通过这些辅助脚本测试、actionlint、Web/独立 Core 的归档检查和上述 Android 三种 ABI 的实际打包验证。Windows/macOS 安装包及 iOS IPA 尚未在本机编译；GitHub Actions 的实际运行结果见下述记录，真实 Release 尚未公开发布。
 
-2026-11-07 的 [Actions 运行 42335070829](https://github.com/omni-stream-ai/omni-stream/actions/runs/42335070829)（提交 `066463b`）已通过版本检查、Web、Linux 桌面与独立 Core、Core workspace 测试，以及 Android 正式签名的通用/分 ABI APK 和 AAB。macOS 两种架构在预检阶段因 `lipo` 参数顺序错误失败；Windows 因 Git Bash 的 `link.exe` 遮蔽 MSVC，在 Rust 构建脚本链接时失败，发布按规则跳过。修复将 Apple 输入文件放在 `-verify_arch` 之前，Windows 使用[构建环境规则](releases.md#ci-构建环境)中的原生 Shell 和明确链接器，并新增 Cargo 宿主/目标链接探针。25 项发布辅助测试和 actionlint 已通过；回归覆盖三种 Apple 目标的架构验证、Windows 链接器配置缺失，以及 C 探针通过但 Cargo 宿主链接失败时必须停止。Windows/macOS 完整编译和安装包仍需修复提交在对应 runner 上重新验证。
+2026-11-07 的 [Actions 运行 42335070829](https://github.com/omni-stream-ai/omni-stream/actions/runs/42335070829)（提交 `066463b`）已通过版本检查、Web、Linux 桌面与独立 Core、Core workspace 测试，以及 Android 正式签名的通用/分 ABI APK 和 AAB。macOS 两种架构在预检阶段因 `lipo` 参数顺序错误失败；Windows 因 Git Bash 的 `link.exe` 遮蔽 MSVC，在 Rust 构建脚本链接时失败，发布按规则跳过。修复将 Apple 输入文件放在 `-verify_arch` 之前，Windows 使用[构建环境规则](releases.md#ci-构建环境)中的原生 Shell 和明确链接器，并新增 Cargo 宿主/目标链接探针。25 项发布辅助测试和 actionlint 已通过；回归覆盖三种 Apple 目标的架构验证、Windows 链接器配置缺失，以及 C 探针通过但 Cargo 宿主链接失败时必须停止。
+
+随后 [Actions 运行 42337676908](https://github.com/omni-stream-ai/omni-stream/actions/runs/42337676908)（提交 `0d8a1f3`）已通过 Windows、macOS arm64/x86_64 的完整编译与安装包、Web 和 Android；Linux 在 `management_subtasks::repeated_subtasks_share_one_operation_budget` 失败。任务保存的延迟事务先读后写，与其他写入重叠时出现即时锁错误，导致 Core 退出及客户端 `IncompleteMessage`。任务写入按[Core 持久化规则](adapters.md#core-与前端边界)修复，并增加可控的并发写入回归：旧实现稳定报 `database is locked`，修复后验证任务、事件及通知一起保存；集成测试失败时保留 Core 标准错误以便定位。
 
 2026-11-06 的 CI 环境复核在隔离 Ubuntu 22.04 中通过 Linux 开发库的编译/链接预检、Python 3.12 下的 22 项发布辅助测试、GUI 类型检查及 117 项单元测试，以及启用 `vendored-openssl` 的独立 Core 和桌面 GUI Release 编译、`.deb` / AppImage 打包。独立 Core 的 `ldd` 检查确认没有动态 OpenSSL 依赖和缺失库，Debian 包内包含可执行的 GUI 与 Core sidecar；安装与真实窗口仍需验收。另通过 Android 三种 ABI 的 NDK 编译/链接预检，并在固定 CI 的 Build Tools/NDK 版本后完成 arm64 调试 APK 构建。各平台的依赖和预检入口见 [CI 构建环境](releases.md#ci-构建环境)。
 
-该隔离环境的完整 Core workspace 测试曾有偶发失败：`management_subtasks` 的 `/conversation/detail` 请求报 `IncompleteMessage`；保留 Core 标准错误后复现到任务保存时 `database is locked` 并退出。此运行时并发问题尚未修复，后续 CI 通过不代表已消除偶发失败；复现时会阻止流水线发布，单用例重跑通过也不能视为全量测试已通过。
+本次任务事务修复已在上述隔离 Ubuntu 22.04 环境通过与 CI 相同的 `cargo test --workspace --locked --features omnistream/vendored-openssl`，保留默认并行执行；`management_subtasks` 连续 20 轮、共 200 项检查全部通过，失败即停止。该验证使用当前源码快照；本地通过不替代修复提交的 GitHub Actions 验证。
 
 工作流在 Web 任务执行 GUI 类型检查、组件测试和构建，在 Linux 桌面任务执行 Core workspace 测试；各平台分别编译、打包后才进入发布任务。GitHub 多平台任务、正式 Android 签名和可选 iOS 钥匙串/归档导出需在对应 runner 配置凭据后验证，不能由本地辅助脚本测试推定通过。
