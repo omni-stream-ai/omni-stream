@@ -67,7 +67,7 @@ def apple(target, ios=False):
             minimum = json.loads((ROOT / 'apps/gui/src-tauri/tauri.ios.conf.json').read_text())['bundle']['iOS']['minimumSystemVersion']
             options += ['-target', 'arm64-apple-ios' + minimum]
         run('clang', *options, str(source), '-o', str(source.with_suffix('')))
-        run('lipo', '-verify_arch', arch, str(source.with_suffix('')))
+        run('lipo', str(source.with_suffix('')), '-verify_arch', arch)
     rust_target(target)
     if ios:
         require_tools('ruby', 'pod', 'xcodegen')
@@ -77,7 +77,11 @@ def apple(target, ios=False):
 
 
 def windows():
-    require_tools('cl', 'link', 'nmake', 'perl', 'nasm')
+    require_tools('cl', 'nmake', 'perl', 'nasm', 'cargo', 'rustc')
+    linker = os.environ.get('CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER')
+    if not linker:
+        raise RuntimeError('Set CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER to the native MSVC link.exe')
+    require_path(Path(linker))
     run(os.environ.get('OPENSSL_SRC_PERL', 'perl'), '-e',
         'die "OpenSSL requires native Windows Perl\n" unless $^O eq "MSWin32"; print "Native Windows Perl ready\n";')
     run('nasm', '-v')
@@ -86,7 +90,17 @@ def windows():
         source.write_text('int main(void) { return 0; }\n')
         run('cl', '/nologo', str(source), '/Fo' + str(source.with_suffix('.obj')), '/Fe' + str(source.with_suffix('.exe')))
         run(str(source.with_suffix('.exe')))
-    rust_target('x86_64-pc-windows-msvc')
+        # A C probe alone misses Cargo host/build-script linker selection.
+        target = 'x86_64-pc-windows-msvc'
+        rust_target(target)
+        (source.parent / 'Cargo.toml').write_text(
+            '[package]\nname = "omnistream-linker-probe"\nversion = "0.0.0"\nedition = "2021"\n')
+        (source.parent / 'build.rs').write_text('fn main() {}\n')
+        (source.parent / 'src').mkdir()
+        (source.parent / 'src/main.rs').write_text('fn main() {}\n')
+        run('cargo', 'build', '--offline', '--manifest-path', str(source.parent / 'Cargo.toml'),
+            '--target', target, '--target-dir', str(source.parent / 'target'))
+        run(str(source.parent / 'target' / target / 'debug/omnistream-linker-probe.exe'))
 
 
 def android():

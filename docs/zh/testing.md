@@ -115,10 +115,12 @@ actionlint .github/workflows/release.yml
 
 辅助脚本测试使用临时 Git 仓库与模拟 GitHub API，覆盖版本一致性、分支/手动触发、标签冲突与草稿重试、可达标签的更新日志范围和分类、产物完整性及校验和、Core 归档权限、签名配置及清理、草稿上传后再公开，以及已公开 Release 的保护。不会向真实仓库发布或使用正式签名凭据。
 
-当前已通过这些辅助脚本测试、actionlint、Web/独立 Core 的归档检查和上述 Android 三种 ABI 的实际打包验证。Windows/macOS 安装包及 iOS IPA 尚未在本机编译，GitHub Actions 工作流和真实 Release 发布尚未执行。
+当前已通过这些辅助脚本测试、actionlint、Web/独立 Core 的归档检查和上述 Android 三种 ABI 的实际打包验证。Windows/macOS 安装包及 iOS IPA 尚未在本机编译；GitHub Actions 的实际运行结果见下述记录，真实 Release 尚未公开发布。
+
+2026-11-07 的 [Actions 运行 42335070829](https://github.com/omni-stream-ai/omni-stream/actions/runs/42335070829)（提交 `066463b`）已通过版本检查、Web、Linux 桌面与独立 Core、Core workspace 测试，以及 Android 正式签名的通用/分 ABI APK 和 AAB。macOS 两种架构在预检阶段因 `lipo` 参数顺序错误失败；Windows 因 Git Bash 的 `link.exe` 遮蔽 MSVC，在 Rust 构建脚本链接时失败，发布按规则跳过。修复将 Apple 输入文件放在 `-verify_arch` 之前，Windows 使用[构建环境规则](releases.md#ci-构建环境)中的原生 Shell 和明确链接器，并新增 Cargo 宿主/目标链接探针。25 项发布辅助测试和 actionlint 已通过；回归覆盖三种 Apple 目标的架构验证、Windows 链接器配置缺失，以及 C 探针通过但 Cargo 宿主链接失败时必须停止。Windows/macOS 完整编译和安装包仍需修复提交在对应 runner 上重新验证。
 
 2026-11-06 的 CI 环境复核在隔离 Ubuntu 22.04 中通过 Linux 开发库的编译/链接预检、Python 3.12 下的 22 项发布辅助测试、GUI 类型检查及 117 项单元测试，以及启用 `vendored-openssl` 的独立 Core 和桌面 GUI Release 编译、`.deb` / AppImage 打包。独立 Core 的 `ldd` 检查确认没有动态 OpenSSL 依赖和缺失库，Debian 包内包含可执行的 GUI 与 Core sidecar；安装与真实窗口仍需验收。另通过 Android 三种 ABI 的 NDK 编译/链接预检，并在固定 CI 的 Build Tools/NDK 版本后完成 arm64 调试 APK 构建。各平台的依赖和预检入口见 [CI 构建环境](releases.md#ci-构建环境)。
 
-该隔离环境的完整 Core workspace 测试仍有偶发失败：`management_subtasks` 的 `/conversation/detail` 请求报 `IncompleteMessage`；保留 Core 标准错误后复现到任务保存时 `database is locked` 并退出。此项属于运行时并发问题，仍会阻止流水线发布，单用例重跑通过不能视为全量测试已通过。
+该隔离环境的完整 Core workspace 测试曾有偶发失败：`management_subtasks` 的 `/conversation/detail` 请求报 `IncompleteMessage`；保留 Core 标准错误后复现到任务保存时 `database is locked` 并退出。此运行时并发问题尚未修复，后续 CI 通过不代表已消除偶发失败；复现时会阻止流水线发布，单用例重跑通过也不能视为全量测试已通过。
 
 工作流在 Web 任务执行 GUI 类型检查、组件测试和构建，在 Linux 桌面任务执行 Core workspace 测试；各平台分别编译、打包后才进入发布任务。GitHub 多平台任务、正式 Android 签名和可选 iOS 钥匙串/归档导出需在对应 runner 配置凭据后验证，不能由本地辅助脚本测试推定通过。

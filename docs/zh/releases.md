@@ -34,14 +34,14 @@ python3 .github/scripts/release.py check
 | --- | --- |
 | Web、版本检查与发布 | Ubuntu 24.04，避免 `ubuntu-latest` 自动迁移系统版本 |
 | Linux 桌面 | Ubuntu 22.04 保持现有运行库兼容基线；显式安装 C/C++ 编译器、make、Perl、pkg-config、D-Bus、OpenSSL、WebKitGTK 4.1、GTK/AppIndicator/X11 相关开发库，以及 curl、wget、file、librsvg、patchelf、FUSE 2 |
-| Windows 桌面 | Windows Server 2022；启用 MSVC x64 / Windows SDK，安装 NASM 2.16.03，指定 runner 自带的原生 Strawberry Perl |
+| Windows 桌面 | Windows Server 2022；启用 MSVC x64 / Windows SDK，安装 NASM 2.16.03，指定 runner 自带的原生 Strawberry Perl；编译使用 PowerShell，并通过 `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER` 固定 MSVC `link.exe` 的绝对路径 |
 | macOS 桌面 | macOS 15 ARM runner，选择 Xcode 16.4；分别构建 arm64 与 x86_64，先检查对应架构的 SDK 编译和链接 |
 | Android | Ubuntu 24.04、Temurin JDK 17、SDK Platform 36、Build Tools 36.0.0、NDK 28.2.13676358；生成的 Gradle 同步固定 Build Tools 与 NDK，安装 ARM64、ARMv7、x86_64 Rust 目标 |
 | iOS（可选） | macOS 15、Xcode 16.4 / iPhoneOS SDK、Ruby 3.3；通过该 Ruby 安装 CocoaPods 与 xcodeproj，另安装 XcodeGen |
 
 Core 的发布构建与 Linux workspace 测试启用 `vendored-openssl`，按目标架构从锁定源码编译并静态链接 OpenSSL，避免 Windows 缺少开发库或 DLL、macOS Intel 跨架构误用 ARM Homebrew 库，以及安装后依赖构建机的 OpenSSL 路径。普通开发仍可使用系统 OpenSSL。源码构建需 C 编译器、make 和 Perl；Windows 显式设置 `OPENSSL_SRC_PERL`，防止 Git Bash 的 MSYS Perl 被优先选中。
 
-各原生任务先运行 [check_environment.py](../../.github/scripts/check_environment.py)：Linux 检查 pkg-config 并实际编译、链接 D-Bus/GTK/OpenSSL；Windows 检查原生 Perl、NASM、MSVC/SDK；macOS/iOS 编译和验证目标架构的 SDK 探针；Android 检查 SDK/NDK 版本，并为三种 ABI 编译、链接探针和确认 Rust 标准库。缺少依赖时在完整 Rust 编译前直接失败。iOS 的 CocoaPods、Ruby 工程编辑器使用同一解释器，避免混用 Homebrew 的独立 Gem 环境。
+各原生任务先运行 [check_environment.py](../../.github/scripts/check_environment.py)：Linux 检查 pkg-config 并实际编译、链接 D-Bus/GTK/OpenSSL；Windows 检查原生 Perl、NASM、MSVC/SDK，再离线编译并运行带构建脚本的最小 Cargo 项目，验证宿主与目标链接，避免 Git Bash 的同名工具遮蔽 MSVC；macOS/iOS 编译和验证目标架构的 SDK 探针；Android 检查 SDK/NDK 版本，并为三种 ABI 编译、链接探针和确认 Rust 标准库。缺少依赖时在完整 Rust 编译前直接失败。iOS 的 CocoaPods、Ruby 工程编辑器使用同一解释器，避免混用 Homebrew 的独立 Gem 环境。
 
 依赖清单参考 [Tauri 前置环境](https://v2.tauri.app/start/prerequisites/)与 [GitHub Runner 镜像清单](https://github.com/actions/runner-images)。Ubuntu 22.04 runner 已公告于 2027 年 4 月 17 日退役，须在此前迁移构建环境并验证 Linux 兼容基线，见[官方公告](https://github.com/actions/runner-images/issues/14254)。
 

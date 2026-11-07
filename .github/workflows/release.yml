@@ -82,9 +82,7 @@ jobs:
     if: needs.metadata.outputs.should_build == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
-    defaults:
-      run:
-        shell: bash
+    # Use the runner's default shell so Windows keeps the native MSVC PATH.
     strategy:
       fail-fast: false
       matrix:
@@ -129,12 +127,18 @@ jobs:
         uses: ilammy/setup-nasm@v1
         with:
           version: 2.16.03
-      - name: Select native Windows Perl for OpenSSL
+      - name: Select native Windows linker and Perl
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $perl = 'C:\Strawberry\perl\bin\perl.exe'
           if (!(Test-Path $perl)) { throw 'The Windows runner is missing Strawberry Perl' }
+          if (!$env:VCToolsInstallDir) { throw 'MSVC tools have not been initialized' }
+          $tools = Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64'
+          $linker = Join-Path $tools 'link.exe'
+          if (!(Test-Path $linker)) { throw 'The Windows runner is missing the MSVC linker' }
+          $tools >> $env:GITHUB_PATH
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" >> $env:GITHUB_ENV
           "OPENSSL_SRC_PERL=$perl" >> $env:GITHUB_ENV
       - uses: ./.github/actions/setup-build
         with:
@@ -145,6 +149,7 @@ jobs:
         run: python .github/scripts/check_environment.py linux
       - name: Verify Windows build environment
         if: runner.os == 'Windows'
+        shell: pwsh
         run: python .github/scripts/check_environment.py windows
       - name: Verify macOS build environment and target SDK
         if: runner.os == 'macOS'
@@ -154,13 +159,13 @@ jobs:
         env:
           CARGO_PROFILE_TEST_DEBUG: '0'
         run: cargo test --workspace --locked --features omnistream/vendored-openssl
-      - name: Build Core and prepare sidecar
+      - name: Build Core
         env:
           OMNISTREAM_FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.OMNISTREAM_FCM_SERVICE_ACCOUNT_JSON }}
           OMNISTREAM_REQUIRE_BUNDLED_FCM: ${{ needs.metadata.outputs.should_release }}
-        run: |
-          cargo build --release --locked -p omnistream --bin omnistream --features vendored-openssl --target '${{ matrix.target }}'
-          python .github/scripts/artifacts.py sidecar '${{ matrix.target }}'
+        run: cargo build --release --locked -p omnistream --bin omnistream --features vendored-openssl --target '${{ matrix.target }}'
+      - name: Prepare Core sidecar
+        run: python .github/scripts/artifacts.py sidecar '${{ matrix.target }}'
       - name: Build desktop installer
         env:
           APPLE_SIGNING_IDENTITY: '-'
